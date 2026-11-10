@@ -106,7 +106,7 @@ if [[ $LANG_UI == fr ]]; then
     dv_wt_fail "git worktree remove a refusé : %s"
     dv_un "Dossiers Library/ de projets Unity inactifs"
     dv_un_warn "Unity le recréera à la prochaine ouverture, ce qui prend du temps (réimport de tous les assets)."
-    dv_un_none "Aucun projet Unity inactif depuis %s j." dv_un_pick "Projets dont vider Library/ (ex. 1 3), « t » = tout, vide = rien"
+    dv_un_none "Aucun projet Unity inactif depuis %s j." dv_un_yes "--yes ne vide jamais Library/ d'un projet Unity : relance sans --yes pour le choisir." dv_un_pick "Projets dont vider Library/ (ex. 1 3), « t » = tout, vide = rien"
     dv_un_ask "Vider %s dossier(s) Library/ ?" dv_done "%s libérés"
     sy_spin "Lecture de l'état du système…" sy_swap "Échange (swap) : %s utilisés sur %s"
     sy_snap "Instantanés locaux Time Machine : %s" sy_cont "Conteneur APFS %s : %s utilisés sur %s · %s non alloués"
@@ -192,7 +192,7 @@ else
     dv_wt_fail "git worktree remove refused: %s"
     dv_un "Library/ folders of idle Unity projects"
     dv_un_warn "Unity will rebuild it next time the project opens, which takes a while (all assets are reimported)."
-    dv_un_none "No Unity project idle for %s days." dv_un_pick "Projects whose Library/ to empty (e.g. 1 3), \"a\" = all, empty = none"
+    dv_un_none "No Unity project idle for %s days." dv_un_yes "--yes never empties a Unity project's Library/: run again without --yes to choose." dv_un_pick "Projects whose Library/ to empty (e.g. 1 3), \"a\" = all, empty = none"
     dv_un_ask "Empty %s Library/ folder(s)?" dv_done "%s freed"
     sy_spin "Reading system state…" sy_swap "Swap: %s used of %s"
     sy_snap "Local Time Machine snapshots: %s" sy_cont "APFS container %s: %s used of %s · %s not allocated"
@@ -959,7 +959,9 @@ do_dev() {
     done
     print
     pick=()
-    for i in $(sel_idx ${#up} "$T[dv_un_pick]"); do pick+=( $i ); done
+    if [[ -n $YES && -z $DRY_RUN ]]; then warn "$T[dv_un_yes]"; else
+      for i in $(sel_idx ${#up} "$T[dv_un_pick]"); do pick+=( $i ); done
+    fi
     if (( ${#pick} )) && confirm "$(t dv_un_ask ${#pick})"; then
       for i in $pick; do lib_empty "$up[i]" && (( freed += uk[i] )); done
     fi
