@@ -272,7 +272,8 @@ out=$(MAC_CLEANER_LANG=en $BIN history)
 check "historique : en anglais" eval '[[ $out == *"Freed in total"* && $out == *"Clean caches"* ]]'
 teardown
 
-tsv_ok() { local l; for l in ${(f)1}; do [[ $l == <1->$'\t'<->$'\t'*$'\t'*$'\t'* ]] || return 1; done }
+tsv_ok() { local l; for l in ${(f)1}; do [[ $l == <1->$'\t'<->$'\t'*$'\t'*$'\t'* || $l == 0$'\t'<->$'\t'*$'\t'*$'\t'(skipped|kept) ]] || return 1; done }
+col() { local l; for l in ${(f)1}; do [[ $l == *"$2"* ]] && { print -r -- "${${(@ps:\t:)l}[$3]}"; return }; done }
 
 setup
 mkfile -n 3m $HOME/gros.bin; mkfile -n 2m $HOME/moyen.bin; mkfile -n 1m $HOME/petit.bin
@@ -335,13 +336,50 @@ teardown
 setup; mkcaches; mkproject ancien old
 out=$($BIN caches --list </dev/null)
 check "caches --list : clé, taille, chemin" eval 'tsv_ok "$out" && [[ $out == *"$HOME/Library/Caches	apps"* && $out == *"	npm"* && $out == *"	nodemod"* ]]'
-i=${${(M)${(f)out}:#*$'\t'npm}%%$'\t'*}
+i=$(col "$out" "	npm	" 1)
 $BIN caches --yes --select $i </dev/null >/dev/null
 check "caches --yes --select : seul npm vidé" eval 'empty_dir $HOME/.npm/_cacache && [[ -f $HOME/Library/Caches/com.test.app/blob && -f $HOME/Library/Logs/test.log ]]'
-i=${${(M)${(f)out}:#*$'\t'nodemod}%%$'\t'*}
+i=$(col "$out" "	nodemod	" 1)
 $BIN caches --yes --select $i </dev/null >/dev/null
 check "caches --yes --select : node_modules sur demande" eval '[[ ! -e $HOME/code/ancien/node_modules ]]'
-check "--list refusé hors des commandes à liste" eval '! $BIN ram --list </dev/null >/dev/null 2>&1'
+check "--list refusé hors des commandes à liste" eval '! $BIN ram --list </dev/null >/dev/null 2>&1 && ! $BIN system --list </dev/null >/dev/null 2>&1'
+teardown
+
+setup; mkcaches; runapp ZzRun com.test.zzrun
+mkdir -p $HOME/Library/Caches/com.test.zzrun; print c > $HOME/Library/Caches/com.test.zzrun/cache
+mkproject ancien old
+out=$($BIN caches --list </dev/null)
+check "caches --list : safe/excluded en 6e colonne" eval 'tsv_ok "$out" && [[ $(col "$out" "	npm	" 6) == safe && $(col "$out" "	nodemod	" 6) == excluded && $(col "$out" "	apps	" 6) == safe ]]'
+check "caches --list : app en cours en ligne skipped (index 0)" eval '[[ $(col "$out" com.test.zzrun 5) == skipped && $(col "$out" com.test.zzrun 1) == 0 && $(col "$out" com.test.zzrun 4) == $HOME/Library/Caches/com.test.zzrun ]]'
+check "caches --list : rien supprimé" eval '[[ -f $HOME/Library/Caches/com.test.zzrun/cache && -f $HOME/Library/Caches/com.test.app/blob && ! -e $HIST ]]'
+teardown
+
+setup; runapp ZzRun com.test.zzrun
+T1=$MAC_CLEANER_TMP_DIRS X1=$MAC_CLEANER_CLONE_DIRS
+print a > $T1/vieux-a.log; print b > $T1/vieux-b.log; print r > $T1/recent.log; old $T1/vieux-a.log $T1/vieux-b.log
+mkdir -p $X1/com.test.zzrun.code_sign_clone $X1/com.test.parti.code_sign_clone
+print x > $X1/com.test.zzrun.code_sign_clone/f; print y > $X1/com.test.parti.code_sign_clone/f
+out=$($BIN temp --list </dev/null)
+check "temp --list : tmp, clone et kept" eval 'tsv_ok "$out" && [[ $(col "$out" vieux-a.log 5) == tmp && $(col "$out" com.test.parti 5) == clone && $(col "$out" com.test.zzrun 5) == kept && $(col "$out" com.test.zzrun 1) == 0 && $out != *recent.log* ]]'
+check "temp --list : libellé du clone sans suffixe" eval '[[ $(col "$out" com.test.parti 3) == com.test.parti ]]'
+check "temp --list : rien supprimé" eval '[[ -f $T1/vieux-a.log && -d $X1/com.test.parti.code_sign_clone && ! -e $HIST ]]'
+i=$(col "$out" vieux-b.log 1)
+out=$($BIN temp --dry-run --select $i </dev/null)
+check "temp --dry-run --select : seul l'élément choisi" eval '[[ $out == *"[aperçu] rm -rf"*vieux-b.log* && $out != *"[aperçu]"*vieux-a.log* && -f $T1/vieux-b.log ]]'
+$BIN temp --yes --select $i </dev/null >/dev/null
+check "temp --yes --select : seul l'élément choisi supprimé" eval '[[ ! -e $T1/vieux-b.log && -f $T1/vieux-a.log && -d $X1/com.test.parti.code_sign_clone && -d $X1/com.test.zzrun.code_sign_clone ]]'
+teardown
+
+setup; print x > $MAC_CLEANER_TRASH_DIR/a.txt; mkdir -p $MAC_CLEANER_TRASH_DIR/dossier; head -c 100000 /dev/urandom > $MAC_CLEANER_TRASH_DIR/dossier/f
+out=$($BIN trash --list </dev/null)
+check "trash --list : un élément de premier niveau par ligne" eval 'tsv_ok "$out" && [[ ${#${(f)out}} == 2 && $(col "$out" a.txt 5) == file && $(col "$out" dossier 5) == dir && $(col "$out" dossier 2) -ge 90 ]]'
+check "trash --list : rien vidé" eval '[[ -f $MAC_CLEANER_TRASH_DIR/a.txt && ! -e $HIST ]]'
+teardown
+
+setup; mkcaches; print x > $MAC_CLEANER_TRASH_DIR/a.txt; print a > $MAC_CLEANER_TMP_DIRS/vieux.log; old $MAC_CLEANER_TMP_DIRS/vieux.log
+out=$($BIN auto --list </dev/null)
+check "auto --list : sections dans l'ordre, chemin -" eval 'tsv_ok "$out" && [[ ${${(f)out}[1]} == 1$'"'"'\t'"'"'*$'"'"'\t'"'"'-$'"'"'\t'"'"'apps && ${${(f)out}[-2]} == *$'"'"'\t'"'"'temp && ${${(f)out}[-1]} == *$'"'"'\t'"'"'trash && $out == *$'"'"'\t'"'"'npm* && $out != *nodemod* ]]'
+check "auto --list : rien supprimé" eval '[[ -f $MAC_CLEANER_TRASH_DIR/a.txt && -f $MAC_CLEANER_TMP_DIRS/vieux.log && -f $HOME/Library/Caches/com.test.app/blob && ! -e $HIST ]]'
 teardown
 
 setup

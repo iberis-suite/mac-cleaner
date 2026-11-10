@@ -61,7 +61,7 @@ Options, for any command:
 
 ## Scripting
 
-For `large`, `downloads`, `duplicates`, `startup`, `dev` and `caches`, no keyboard is needed:
+For `large`, `downloads`, `duplicates`, `startup`, `dev`, `caches`, `temp`, `trash` and `auto`, no keyboard is needed:
 
 ```sh
 mac-cleaner large --list --min 500          # do nothing, one TSV line per item: index, KB, label, path, type
@@ -71,8 +71,15 @@ mac-cleaner downloads --list --days 90
 mac-cleaner duplicates --list --dir ~/Documents --min 1   # index = group, type = keep or copy
 mac-cleaner startup --list                  # type = login, agent, sysagent, daemon, plus a 6th column on/off
 mac-cleaner dev --yes --select "2" --select-unity "1"     # worktrees, then Unity Library/ (never with --yes alone)
-mac-cleaner caches --yes --select "1 4"     # type = cache key (apps, logs, npm, brew, docker, nodemod…)
+mac-cleaner caches --list                   # type = cache key (apps, logs, npm, brew, docker, nodemod…), 6th column safe or excluded
+mac-cleaner caches --yes --select "1 4"
+mac-cleaner temp --list                     # type = tmp or clone; kept = clone of a running app
+mac-cleaner temp --yes --select "2 5"
+mac-cleaner trash --list                    # one line per top-level item of the Trash, type = file or dir
+mac-cleaner auto --list                     # one line per section auto would run, in order: index, KB, label, -, section
 ```
+
+Lines with index `0` are not selectable: `skipped` (cache of a running app, in `caches` and `auto`) and `kept` (app copy of a running app, in `temp` and `auto`).
 
 Titles and colors are not printed with `--list`, so stdout only holds the TSV lines. Indexes are the same as the list as long as the disk did not change. If `SUDO_ASKPASS` is set, every `sudo` call becomes `sudo -A` (`ram`, `system`, system startup items), so no terminal is needed.
 
@@ -94,7 +101,7 @@ Pour un Mac de développement plein :
 - `mac-cleaner caches --dry-run` ou `--yes` : plus de choix au clavier, tout sauf Docker et `node_modules` (la sélection de `auto`).
 - `mac-cleaner uninstall "/Applications/Nom.app" --dry-run` (ou `--yes`) : traite directement cette app, sans recherche ni question ; les apps Apple restent refusées.
 - `auto` inclut `temp`, jamais `dev` ni `Library/` Unity. `--dry-run` montre ce qui serait fait sans rien supprimer. Installation : `brew install chaibialaa/tap/mac-cleaner`, puis `mac-cleaner`.
-- Scripts et app : `--list` (aucune action, une ligne TSV par élément : index, Ko, libellé, chemin, type), `--select "1 3"` ou `all` (répond au choix avec les mêmes index, avec `--dry-run` ou `--yes`), `--select-unity` pour `dev`, et `--min`, `--days`, `--dir` pour les paramètres de `large`, `downloads`, `duplicates`. Avec `SUDO_ASKPASS`, le CLI appelle `sudo -A` : plus besoin de terminal.
+- Scripts et app : `--list` pour `large`, `downloads`, `duplicates`, `startup`, `dev`, `caches` (6e colonne `safe` ou `excluded`), `temp` (type `tmp` ou `clone`), `trash` (un élément de premier niveau par ligne) et `auto` (une ligne par section, dans l'ordre d'exécution) ; aucune action, une ligne TSV par élément : index, Ko, libellé, chemin, type ; index `0` = non sélectionnable, `skipped` (cache d'une app ouverte) ou `kept` (copie d'une app ouverte) ; `--select "1 3"` ou `all` (répond au choix avec les mêmes index, avec `--dry-run` ou `--yes`), `--select-unity` pour `dev`, et `--min`, `--days`, `--dir` pour les paramètres de `large`, `downloads`, `duplicates`. Avec `SUDO_ASKPASS`, le CLI appelle `sudo -A` : plus besoin de terminal.
 - L'app de barre des menus (`menubar/`) peut programmer `mac-cleaner auto --yes` chaque lundi à 10 h (LaunchAgent, journal dans `~/Library/Logs/mac-cleaner-weekly.log`).
 
 ## Tests

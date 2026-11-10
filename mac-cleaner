@@ -1,7 +1,7 @@
 #!/bin/zsh
 setopt null_glob extended_glob
 
-VERSION=1.3.1
+VERSION=1.3.2
 SCRIPT=${0:t}
 
 DRY_RUN= YES= CMD= ARG= LIST= SELECT= SELECT_SET= SELECT_U= SELECT_U_SET= OPT_MIN= OPT_DAYS= OPT_DIR=
@@ -142,7 +142,7 @@ if [[ $LANG_UI == fr ]]; then
     sy_done "Espace libre : %s → %s"
     u_dry "--dry-run, -n   aperçu : montre ce qui serait fait, sans rien supprimer"
     u_yes "--yes, -y       ne demande pas de confirmation"
-    u_list "--list          sans rien faire : une ligne TSV par élément (index, Ko, libellé, chemin, type)"
+    u_list "--list          sans rien faire : une ligne TSV par élément (index, Ko, libellé, chemin, type) ; index 0 = ignoré"
     u_sel "--select \"1 3\"  répond au choix avec ces index (ou all) ; dev : --select-unity pour Library/"
     u_opt "--min <Mo>, --days <n>, --dir <chemin>   paramètres de large, downloads, duplicates"
   )
@@ -233,7 +233,7 @@ else
     sy_done "Free space: %s → %s"
     u_dry "--dry-run, -n   preview what would be done, delete nothing"
     u_yes "--yes, -y       do not ask for confirmation"
-    u_list "--list          do nothing: one TSV line per item (index, KB, label, path, type)"
+    u_list "--list          do nothing: one TSV line per item (index, KB, label, path, type); index 0 = skipped"
     u_sel "--select \"1 3\"  answer the choice with these indexes (or all); dev: --select-unity for Library/"
     u_opt "--min <MB>, --days <n>, --dir <path>   parameters of large, downloads, duplicates"
   )
@@ -459,6 +459,14 @@ do_ram() {
 
 do_trash() {
   title "$T[trash_title]"
+  if [[ -n $LIST ]]; then
+    local e i=1
+    for e in $TRASH_DIR/*(DN); do
+      emit $i $(sizek "$e") "${e:t}" "$e" $([[ -d $e ]] && print dir || print file)
+      (( i++ ))
+    done
+    return 0
+  fi
   local k=$(spin "$T[trash_spin]" sizek $TRASH_DIR/*(DN))
   print "  $(t trash_size "${B}$(human $k)${N}")"
   (( k == 0 )) && print "  ${D}$T[trash_zero]${N}"
@@ -470,6 +478,7 @@ do_trash() {
     celebrate "$(t trash_done "$(human $k)")"
   else
     err "$T[trash_fail]"
+    return 1
   fi
 }
 
@@ -633,6 +642,11 @@ apps_split() {
   done
 }
 
+skip_emit() {
+  local type=$1 e; shift
+  for e in "$@"; do emit 0 $(sizek "$e") "${${e:t}%.code_sign_clone}" "$e" $type; done
+}
+
 skip_note() {
   local key=$1; shift
   (( $# )) || return 0
@@ -720,7 +734,10 @@ do_caches() {
   for r in $rows; do keys+=( ${r%%$'\t'*} ); sizes+=( ${r#*$'\t'} ); done
   (( ${#keys} )) || { rm -f $NM_LIST; return 0 }
   if [[ -n $LIST ]]; then
-    for i in {1..${#keys}}; do emit $i ${sizes[i]} "$(cache_label ${keys[i]})" "${CDIR[${keys[i]}]}" ${keys[i]}; done
+    for i in {1..${#keys}}; do
+      emit $i ${sizes[i]} "$(cache_label ${keys[i]})" "${CDIR[${keys[i]}]}" ${keys[i]} $( (( ${SAFE_KEYS[(Ie)${keys[i]}]} )) && print safe || print excluded )
+    done
+    skip_emit skipped $CA_KEEP
     rm -f $NM_LIST
     return 0
   fi
@@ -767,7 +784,7 @@ sel_idx() {
 
 TEMP_DAYS=${MAC_CLEANER_TEMP_DAYS:-3}
 DEV_DAYS=${MAC_CLEANER_DEV_DAYS:-14}
-typeset -a TE_PATHS TE_KEEP TE_TMP TE_CLONE
+typeset -a TE_PATHS TE_KEEP TE_TMP TE_CLONE TE_ITEMS TE_SIZE
 TE_KB=0
 
 temp_roots() {
@@ -815,7 +832,7 @@ temp_scan() {
 }
 
 temp_collect() {
-  TE_PATHS=() TE_KEEP=() TE_TMP=() TE_CLONE=() TE_KB=0
+  TE_PATHS=() TE_KEEP=() TE_TMP=() TE_CLONE=() TE_ITEMS=() TE_SIZE=() TE_KB=0
   load_running
   local -a rows=( ${(f)"$(spin "$T[te_spin]" temp_scan)"} )
   local r k sz p
@@ -823,11 +840,16 @@ temp_collect() {
     k=${r%%$'\t'*}; r=${r#*$'\t'}; sz=${r%%$'\t'*}; p=${r#*$'\t'}
     case $k in
       keep) TE_KEEP+=( "$p" ) ;;
-      tmp) TE_TMP+=( "$sz	$p" ); TE_PATHS+=( "$p" ); (( TE_KB += sz )) ;;
-      clone) TE_CLONE+=( "$sz	$p" ); TE_PATHS+=( "$p" ); (( TE_KB += sz )) ;;
+      tmp) TE_TMP+=( "$sz	$p" ); (( TE_KB += sz )) ;;
+      clone) TE_CLONE+=( "$sz	$p" ); (( TE_KB += sz )) ;;
     esac
   done
   TE_TMP=( ${(On)TE_TMP} ) TE_CLONE=( ${(On)TE_CLONE} )
+  TE_ITEMS=( ${(o)TE_TMP/#<->$'\t'/tmp$'\t'} ${(o)TE_CLONE/#<->$'\t'/clone$'\t'} )
+  TE_PATHS=() TE_SIZE=()
+  local -A szof
+  for r in $TE_TMP $TE_CLONE; do szof[${r#*$'\t'}]=${r%%$'\t'*}; done
+  for r in $TE_ITEMS; do TE_PATHS+=( "${r#*$'\t'}" ); TE_SIZE+=( $szof[${r#*$'\t'}] ); done
 }
 
 temp_group() {
@@ -871,6 +893,24 @@ free_kb() { local -a d=( $(disk_stats) ); print ${d[2]:-0} }
 do_temp() {
   title "$T[mt]"
   temp_collect
+  local i
+  if [[ -n $LIST ]]; then
+    for i in {1..${#TE_ITEMS}}; do
+      (( ${#TE_ITEMS} )) || break
+      emit $i $TE_SIZE[i] "${${TE_PATHS[i]:t}%.code_sign_clone}" "$TE_PATHS[i]" ${TE_ITEMS[i]%%$'\t'*}
+    done
+    skip_emit kept $TE_KEEP
+    return 0
+  fi
+  if [[ -n $SELECT_SET ]]; then
+    local -a keep_p keep_t
+    TE_KB=0
+    for i in $(pick_idx "$SELECT" ${#TE_PATHS}); do keep_p+=( "$TE_PATHS[i]" ); (( TE_KB += TE_SIZE[i] )); done
+    for i in $TE_TMP; do (( ${keep_p[(Ie)${i#*$'\t'}]} )) && keep_t+=( "$i" ); done
+    TE_TMP=( $keep_t ) keep_t=()
+    for i in $TE_CLONE; do (( ${keep_p[(Ie)${i#*$'\t'}]} )) && keep_t+=( "$i" ); done
+    TE_CLONE=( $keep_t ) TE_PATHS=( $keep_p )
+  fi
   temp_show
   (( ${#TE_PATHS} )) || { ok "$T[te_none]"; return 0 }
   print "  ${B}$(t total "$(human $TE_KB)")${N}"
@@ -1118,6 +1158,16 @@ do_auto() {
   rows=( ${rows:#} )
   temp_collect
   local tk=$(sizek $TRASH_DIR/*(DN)) r s total=0
+  if [[ -n $LIST ]]; then
+    local i=1
+    for r in $rows; do emit $i ${r#*$'\t'} "$(cache_label ${r%%$'\t'*})" - ${r%%$'\t'*}; (( i++ )); done
+    emit $i $TE_KB "$T[mt]" - temp; (( i++ ))
+    emit $i $tk "$T[trash_title]" - trash
+    skip_emit skipped $CA_KEEP
+    skip_emit kept $TE_KEEP
+    rm -f $NM_LIST
+    return 0
+  fi
   for r in $rows; do
     s=${r#*$'\t'}; (( total += s ))
     printf "  %9s  %s\n" "$(human $s)" "$(cache_label ${r%%$'\t'*})"
@@ -1386,8 +1436,8 @@ usage() {
   print "  $T[u_dry]\n  $T[u_yes]\n  $T[u_list]\n  $T[u_sel]\n  $T[u_opt]"
 }
 
-if [[ -n $LIST && $CMD != (gros|large|caches|telechargements|downloads|demarrage|startup|doublons|duplicates|dev) ]]; then
-  print -u2 -- "--list: caches large downloads duplicates startup dev"
+if [[ -n $LIST && $CMD != (gros|large|caches|telechargements|downloads|demarrage|startup|doublons|duplicates|dev|temp|temporaires|corbeille|trash|auto) ]]; then
+  print -u2 -- "--list: caches temp trash auto large downloads duplicates startup dev"
   exit 2
 fi
 
