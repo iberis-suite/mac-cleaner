@@ -57,6 +57,7 @@ Options, for any command:
 - Apple system apps are never uninstalled.
 - The interface follows your system language (English or French). Force it with `MAC_CLEANER_LANG=en` or `fr`.
 - `NO_COLOR=1` disables colors and animations.
+- The menu bar app (`menubar/`) can schedule `mac-cleaner auto --yes` every Monday at 10:00 (a LaunchAgent, log in `~/Library/Logs/mac-cleaner-weekly.log`).
 
 History is kept in `~/.local/state/mac-cleaner/history.tsv`.
 
@@ -76,6 +77,7 @@ Pour un Mac de développement plein :
 - `mac-cleaner caches --dry-run` ou `--yes` : plus de choix au clavier, tout sauf Docker et `node_modules` (la sélection de `auto`).
 - `mac-cleaner uninstall "/Applications/Nom.app" --dry-run` (ou `--yes`) : traite directement cette app, sans recherche ni question ; les apps Apple restent refusées.
 - `auto` inclut `temp`, jamais `dev` ni `Library/` Unity. `--dry-run` montre ce qui serait fait sans rien supprimer. Installation : `brew install chaibialaa/tap/mac-cleaner`, puis `mac-cleaner`.
+- L'app de barre des menus (`menubar/`) peut programmer `mac-cleaner auto --yes` chaque lundi à 10 h (LaunchAgent, journal dans `~/Library/Logs/mac-cleaner-weekly.log`).
 
 ## Tests
 
