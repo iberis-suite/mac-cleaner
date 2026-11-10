@@ -1,10 +1,10 @@
 #!/bin/zsh
 setopt null_glob extended_glob
 
-VERSION=1.3.2
+VERSION=1.4.0
 SCRIPT=${0:t}
 
-DRY_RUN= YES= CMD= ARG= LIST= SELECT= SELECT_SET= SELECT_U= SELECT_U_SET= OPT_MIN= OPT_DAYS= OPT_DIR=
+DRY_RUN= YES= COOKIES= CMD= ARG= LIST= SELECT= SELECT_SET= SELECT_U= SELECT_U_SET= OPT_MIN= OPT_DAYS= OPT_DIR=
 typeset -a ARGV_=( "$@" )
 typeset -i ai=1
 while (( ai <= ${#ARGV_} )); do
@@ -13,6 +13,7 @@ while (( ai <= ${#ARGV_} )); do
     -n|--dry-run) DRY_RUN=1 ;;
     -y|--yes) YES=1 ;;
     --list) LIST=1 ;;
+    --cookies) COOKIES=1 ;;
     --select=*) SELECT=${a#*=} SELECT_SET=1 ;;
     --select) SELECT=$ARGV_[ai+1] SELECT_SET=1; (( ai++ )) ;;
     --select-unity=*) SELECT_U=${a#*=} SELECT_U_SET=1 ;;
@@ -145,6 +146,22 @@ if [[ $LANG_UI == fr ]]; then
     u_list "--list          sans rien faire : une ligne TSV par élément (index, Ko, libellé, chemin, type) ; index 0 = ignoré"
     u_sel "--select \"1 3\"  répond au choix avec ces index (ou all) ; dev : --select-unity pour Library/"
     u_opt "--min <Mo>, --days <n>, --dir <chemin>   paramètres de large, downloads, duplicates"
+    u_ck "--cookies       privacy : prend aussi les cookies avec --yes (déconnecte de tous les sites)"
+    m14 Entretien m15 Confidentialité
+    u_mt "cache DNS, Spotlight, base « Ouvrir avec », scripts périodiques"
+    u_pv "historique, cookies et cache des navigateurs"
+    mt_dns "Vider le cache DNS" mt_spotlight "Réindexer Spotlight" mt_launch "Reconstruire la base « Ouvrir avec »"
+    mt_periodic "Scripts périodiques (daily, weekly, monthly)" mt_absent "absent de ce macOS"
+    mt_pick "Numéros à lancer (ex. 1 3), « t » = tout, vide = rien" mt_ask "Lancer %s opération(s) ?"
+    mt_fail "Échec : %s" mt_done "%s opération(s) faite(s)" mt_root "admin"
+    mt_note "Spotlight réindexe en arrière-plan pendant un moment ; la base « Ouvrir avec » se reconstruit au fil des lancements."
+    pv_spin "Lecture des navigateurs…" pv_history Historique pv_cookies Cookies pv_cache Cache
+    pv_ffhist "Historique (favoris gardés)" pv_none "Aucun navigateur à nettoyer."
+    pv_skip "Ignoré, navigateur ouvert : %s" pv_fda "Safari : accès complet au disque requis pour le lire (Réglages › Confidentialité et sécurité › Accès complet au disque)."
+    pv_auto "Sans choix au clavier (--dry-run / --yes) : historique et cache, pas les cookies (ajoute --cookies)." pv_out "gardé"
+    pv_pick "Numéros à effacer (ex. 1 3), « t » = tout, vide = rien"
+    pv_ask "Effacer définitivement %s élément(s) (%s) ?" pv_done "%s effacés"
+    pv_note "Les cookies effacés déconnectent des sites concernés."
   )
 else
   T=(
@@ -236,6 +253,22 @@ else
     u_list "--list          do nothing: one TSV line per item (index, KB, label, path, type); index 0 = skipped"
     u_sel "--select \"1 3\"  answer the choice with these indexes (or all); dev: --select-unity for Library/"
     u_opt "--min <MB>, --days <n>, --dir <path>   parameters of large, downloads, duplicates"
+    u_ck "--cookies       privacy: also take cookies with --yes (signs you out of every site)"
+    m14 Maintenance m15 Privacy
+    u_mt "DNS cache, Spotlight, \"Open With\" database, periodic scripts"
+    u_pv "browser history, cookies and cache"
+    mt_dns "Flush the DNS cache" mt_spotlight "Reindex Spotlight" mt_launch "Rebuild the \"Open With\" database"
+    mt_periodic "Periodic scripts (daily, weekly, monthly)" mt_absent "not on this macOS"
+    mt_pick "Numbers to run (e.g. 1 3), \"a\" = all, empty = none" mt_ask "Run %s task(s)?"
+    mt_fail "Failed: %s" mt_done "%s task(s) done" mt_root "admin"
+    mt_note "Spotlight reindexes in the background for a while; the \"Open With\" database rebuilds as apps launch."
+    pv_spin "Reading browsers…" pv_history History pv_cookies Cookies pv_cache Cache
+    pv_ffhist "History (bookmarks kept)" pv_none "No browser to clean."
+    pv_skip "Skipped, browser open: %s" pv_fda "Safari: Full Disk Access is needed to read it (Settings › Privacy & Security › Full Disk Access)."
+    pv_auto "No keyboard choice (--dry-run / --yes): history and cache, not cookies (add --cookies)." pv_out "kept"
+    pv_pick "Numbers to erase (e.g. 1 3), \"a\" = all, empty = none"
+    pv_ask "Permanently erase %s item(s) (%s)?" pv_done "%s erased"
+    pv_note "Erased cookies sign you out of those sites."
   )
 fi
 
@@ -400,6 +433,8 @@ log_hist() {
   [[ -n $DRY_RUN ]] && return 0
   mkdir -p ${HIST_FILE:h} 2>/dev/null
   print -r -- "$(date '+%F %H:%M')	$1	${2:-0}	$3" >> $HIST_FILE
+  (( EUID == 0 )) && [[ -n $MAC_CLEANER_USER ]] && chown "$MAC_CLEANER_USER" ${HIST_FILE:h} $HIST_FILE 2>/dev/null
+  return 0
 }
 
 to_trash() {
@@ -1365,6 +1400,266 @@ do_dupes() {
   celebrate "$(t du_done "$(human $k)")"
 }
 
+LSREGISTER=${MAC_CLEANER_LSREGISTER:-/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister}
+MT_KEYS=(dns spotlight launch periodic)
+typeset -a MT_SUDO MT_ASUSER
+
+mt_avail() {
+  case $1 in
+    launch) [[ -x $LSREGISTER ]] ;;
+    periodic) (( $+commands[periodic] )) ;;
+    *) return 0 ;;
+  esac
+}
+
+mt_root() { [[ $1 != launch ]] }
+
+mt_cmds() {
+  local s=${MT_SUDO:+${(j: :)MT_SUDO} } u=${MT_ASUSER:+${(j: :)MT_ASUSER} }
+  case $1 in
+    dns) print -r -- "${s}dscacheutil -flushcache"; print -r -- "${s}killall -HUP mDNSResponder" ;;
+    spotlight) print -r -- "${s}mdutil -E /" ;;
+    launch) print -r -- "${u}$LSREGISTER -kill -r -domain local -domain system -domain user" ;;
+    periodic) print -r -- "${s}periodic daily weekly monthly" ;;
+  esac
+}
+
+mt_run() {
+  case $1 in
+    dns) $MT_SUDO dscacheutil -flushcache && $MT_SUDO killall -HUP mDNSResponder ;;
+    spotlight) $MT_SUDO mdutil -E / ;;
+    launch) $MT_ASUSER "$LSREGISTER" -kill -r -domain local -domain system -domain user ;;
+    periodic) $MT_SUDO periodic daily weekly monthly ;;
+  esac
+}
+
+do_maintenance() {
+  title "$T[m14]"
+  MT_SUDO=( $SUDO ) MT_ASUSER=()
+  if (( EUID == 0 )); then
+    MT_SUDO=()
+    [[ -n $MAC_CLEANER_USER && $MAC_CLEANER_USER != root ]] && MT_ASUSER=( sudo -u $MAC_CLEANER_USER )
+  fi
+  local i k c
+  if [[ -n $LIST ]]; then
+    for i in {1..${#MT_KEYS}}; do
+      k=$MT_KEYS[i]
+      emit $(mt_avail $k && print $i || print 0) 0 "$T[mt_$k]" "${(j:; :)${(f)"$(mt_cmds $k)"}}" $k $(mt_root $k && print root || print user)
+    done
+    return 0
+  fi
+  for i in {1..${#MT_KEYS}}; do
+    k=$MT_KEYS[i]
+    if mt_avail $k; then
+      printf "  ${M}%3d${N}  %s%s\n" $i "$T[mt_$k]" "$(mt_root $k && print "  ${D}($T[mt_root])${N}")"
+      for c in ${(f)"$(mt_cmds $k)"}; do print "       ${D}$c${N}"; done
+    else
+      printf "  ${D}%3d  %s · %s${N}\n" $i "$T[mt_$k]" "$T[mt_absent]"
+    fi
+  done
+  print "\n  ${D}$T[mt_note]${N}\n"
+  local -a pick
+  for i in $(sel_idx ${#MT_KEYS} "$T[mt_pick]" "$SELECT_SET" "$SELECT"); do mt_avail $MT_KEYS[i] && pick+=( $i ); done
+  (( ${#pick} )) || return 0
+  confirm "$(t mt_ask ${#pick})" || return 0
+  if [[ -n $DRY_RUN ]]; then
+    for i in $pick; do for c in ${(f)"$(mt_cmds $MT_KEYS[i])"}; do dry "$c"; done; done
+    celebrate
+    return 0
+  fi
+  if (( ${#MT_SUDO} )); then
+    for i in $pick; do mt_root $MT_KEYS[i] && { $SUDO -p "  ${D}$T[sudo_prompt]${N} " -v || return 1; break }; done
+  fi
+  local -a done_l
+  local failed=0
+  for i in $pick; do
+    k=$MT_KEYS[i]
+    if mt_run $k >/dev/null 2>&1; then ok "$T[mt_$k]"; done_l+=( $k )
+    else err "$(t mt_fail "$T[mt_$k]")"; failed=1; fi
+  done
+  (( ${#done_l} )) && log_hist m14 0 "${(j:, :)done_l}"
+  print
+  celebrate "$(t mt_done ${#done_l})"
+  return $failed
+}
+
+PV_KEYS=(safari chrome firefox brave edge arc)
+typeset -A PV_NAME PV_DATA PV_CACHE PV_EXE
+PV_NAME=(safari Safari chrome Chrome firefox Firefox brave Brave edge Edge arc Arc)
+PV_DATA=(
+  safari "$HOME/Library/Safari" chrome "$HOME/Library/Application Support/Google/Chrome"
+  firefox "$HOME/Library/Application Support/Firefox/Profiles" brave "$HOME/Library/Application Support/BraveSoftware/Brave-Browser"
+  edge "$HOME/Library/Application Support/Microsoft Edge" arc "$HOME/Library/Application Support/Arc/User Data"
+)
+PV_CACHE=(
+  safari "$HOME/Library/Caches/com.apple.Safari" chrome "$HOME/Library/Caches/Google/Chrome"
+  firefox "$HOME/Library/Caches/Firefox/Profiles" brave "$HOME/Library/Caches/BraveSoftware/Brave-Browser"
+  edge "$HOME/Library/Caches/Microsoft Edge" arc "$HOME/Library/Caches/Arc/User Data"
+)
+PV_EXE=(
+  safari "safari.app/contents/macos/safari" chrome "google chrome.app/contents/macos/google chrome"
+  firefox "firefox.app/contents/macos/firefox" brave "brave browser.app/contents/macos/brave browser"
+  edge "microsoft edge.app/contents/macos/microsoft edge" arc "arc.app/contents/macos/arc"
+)
+typeset -a PV_BR PV_PROF PV_CAT PV_KB PV_PATHS PV_RUN PV_FDA
+PV_PS=
+
+pv_running() { [[ $'\n'$PV_PS$'\n' == *"/${PV_EXE[$1]}"$'\n'* ]] }
+
+pv_add() {
+  local br=$1 prof=$2 cat=$3 p
+  shift 3
+  local -a l
+  for p in "$@"; do [[ -e $p ]] && l+=( "$p" ); done
+  (( ${#l} )) || return 0
+  print -r -- "$br	$prof	$cat	$(sizek $l)	${(j:|:)l}"
+}
+
+pv_profiles() {
+  case $1 in
+    firefox) print -rl -- $PV_DATA[firefox]/*(N/) ;;
+    safari) print -r -- $PV_DATA[safari] ;;
+    *) print -rl -- $PV_DATA[$1]/(Default|Profile\ <->)(N/) ;;
+  esac
+}
+
+pv_scan() {
+  local br p c n
+  for br in $PV_KEYS; do
+    [[ -d $PV_DATA[$br] ]] || continue
+    if pv_running $br; then print -r -- "run	$br"; continue; fi
+    if [[ $br == safari ]] && ! ls "$PV_DATA[safari]" >/dev/null 2>&1; then print -r -- "fda	$br"; continue; fi
+    for p in ${(f)"$(pv_profiles $br)"}; do
+      [[ -n $p ]] || continue
+      n=${p:t}; c=$PV_CACHE[$br]
+      case $br in
+        safari)
+          n=-
+          pv_add $br $n history $p/History.db{,-wal,-shm,-lock}
+          pv_add $br $n cookies $HOME/Library/Cookies/Cookies.binarycookies $HOME/Library/Containers/com.apple.Safari/Data/Library/Cookies/Cookies.binarycookies
+          pv_add $br $n cache $c $HOME/Library/Containers/com.apple.Safari/Data/Library/Caches
+          ;;
+        firefox)
+          pv_add $br $n history $p/places.sqlite{,-wal}
+          pv_add $br $n cookies $p/cookies.sqlite{,-wal,-shm}
+          pv_add $br $n cache $c/$n $p/startupCache
+          ;;
+        *)
+          pv_add $br $n history $p/{History,History-journal,"Visited Links","Top Sites","Top Sites-journal"}
+          pv_add $br $n cookies $p/{Cookies,Cookies-journal,Network/Cookies,Network/Cookies-journal}
+          pv_add $br $n cache $c/$n $p/{"Code Cache",GPUCache}
+          ;;
+      esac
+    done
+  done
+}
+
+pv_collect() {
+  PV_BR=() PV_PROF=() PV_CAT=() PV_KB=() PV_PATHS=() PV_RUN=() PV_FDA=()
+  local -a procs=( ${(f)"$(ps -axo comm= 2>/dev/null)"} )
+  [[ -n $MAC_CLEANER_TEST ]] && procs=( ${(M)procs:#${(b)HOME}/*} )
+  PV_PS=${(L)${(F)procs}}
+  local r
+  local -a f
+  for r in ${(f)"$(spin "$T[pv_spin]" pv_scan)"}; do
+    f=( "${(@ps:\t:)r}" )
+    case $f[1] in
+      run) PV_RUN+=( $f[2] ) ;;
+      fda) PV_FDA+=( $f[2] ) ;;
+      *) PV_BR+=( $f[1] ); PV_PROF+=( "$f[2]" ); PV_CAT+=( $f[3] ); PV_KB+=( $f[4] ); PV_PATHS+=( "$f[5]" ) ;;
+    esac
+  done
+}
+
+pv_label() {
+  local i=$1 l
+  [[ $PV_BR[i] == firefox && $PV_CAT[i] == history ]] && l=$T[pv_ffhist] || l=$T[pv_$PV_CAT[i]]
+  print -rn -- "$l"
+}
+
+pv_where() { local i=$1; print -rn -- "$PV_NAME[$PV_BR[i]]${${PV_PROF[i]:#-}:+ · $PV_PROF[i]}" }
+
+ff_history() {
+  local db=$1 q kw=
+  [[ -n $(sqlite3 "$db" "SELECT 1 FROM sqlite_master WHERE name = 'moz_keywords'" 2>/dev/null) ]] && kw=" AND id NOT IN (SELECT place_id FROM moz_keywords WHERE place_id IS NOT NULL)"
+  for q in "DELETE FROM moz_historyvisits" "DELETE FROM moz_inputhistory" \
+    "DELETE FROM moz_places WHERE id NOT IN (SELECT fk FROM moz_bookmarks WHERE fk IS NOT NULL)$kw" \
+    "UPDATE moz_places SET visit_count = 0, last_visit_date = NULL" "VACUUM"; do
+    sqlite3 "$db" "$q" >/dev/null 2>&1
+  done
+  return 0
+}
+
+pv_clean() {
+  local i=$1 p
+  local -a l=( "${(@s:|:)PV_PATHS[i]}" )
+  if [[ $PV_BR[i] == firefox && $PV_CAT[i] == history ]]; then
+    p=$l[1]
+    [[ $p == $HOME/Library/?*/places.sqlite ]] || return 0
+    if [[ -n $DRY_RUN ]]; then dry "sqlite3 ${p/#$HOME/~} · $T[pv_ffhist]"; else ff_history "$p"; fi
+    return 0
+  fi
+  for p in $l; do
+    [[ $p == $HOME/Library/?* ]] || continue
+    if [[ -d $p && ! -L $p ]]; then
+      if [[ -n $DRY_RUN ]]; then dry "rm -rf ${p/#$HOME/~}/*"; else rm -rf -- "$p"/*(DN) 2>/dev/null; fi
+    else
+      if [[ -n $DRY_RUN ]]; then dry "rm -f ${p/#$HOME/~}"; else rm -f -- "$p" 2>/dev/null; fi
+    fi
+  done
+}
+
+do_privacy() {
+  title "$T[m15]"
+  pv_collect
+  local i n=${#PV_BR} br
+  if [[ -n $LIST ]]; then
+    for i in {1..$n}; do (( n )) || break; emit $i $PV_KB[i] "$(pv_where $i) · $(pv_label $i)" "${PV_PATHS[i]%%|*}" $PV_CAT[i] $PV_BR[i]; done
+    for br in $PV_RUN; do emit 0 0 "$PV_NAME[$br]" "$PV_DATA[$br]" running $br; done
+    for br in $PV_FDA; do emit 0 0 "$PV_NAME[$br]" "$PV_DATA[$br]" noaccess $br; done
+    return 0
+  fi
+  local auto= max=0 total=0 out prev=
+  [[ -n $DRY_RUN || -n $YES ]] && auto=1
+  local -a chosen picked
+  [[ -n $SELECT_SET ]] && picked=( $(pick_idx "$SELECT" $n) )
+  for i in {1..$n}; do
+    (( n )) || break
+    (( PV_KB[i] > max )) && max=$PV_KB[i]
+    if [[ -n $SELECT_SET ]]; then (( ${picked[(Ie)$i]} )) && chosen+=( $i )
+    elif [[ -z $auto || $PV_CAT[i] != cookies || -n $COOKIES ]]; then chosen+=( $i ); fi
+  done
+  for i in {1..$n}; do
+    (( n )) || break
+    if [[ "$(pv_where $i)" != $prev ]]; then prev="$(pv_where $i)"; print "  ${B}$prev${N}"; fi
+    out=
+    [[ -n $auto || -n $SELECT_SET ]] && (( ! ${chosen[(Ie)$i]} )) && out="  ${D}($T[pv_out])${N}"
+    printf "  ${M}%3d${N} %s %9s  %s%s\n" $i "$(bar $PV_KB[i] $max 12)" "$(human $PV_KB[i])" "$(pv_label $i)" "$out"
+  done
+  (( n )) && print
+  local -a rn
+  for br in $PV_RUN; do rn+=( $PV_NAME[$br] ); done
+  skip_note pv_skip $rn
+  (( ${#PV_FDA} )) && warn "$T[pv_fda]"
+  (( n )) || { ok "$T[pv_none]"; return 0 }
+  [[ -n $auto && -z $SELECT_SET ]] && print "  ${D}$T[pv_auto]${N}"
+  local sel
+  local -a pick
+  if [[ -n $auto || -n $SELECT_SET ]]; then pick=( $chosen ); else ask sel "$T[pv_pick]"; pick=( $(pick_idx "$sel" $n) ); fi
+  (( ${#pick} )) || return 0
+  for i in $pick; do (( total += PV_KB[i] )); done
+  print "\n  ${B}$(t total "$(human $total)")${N}\n"
+  confirm "$(t pv_ask ${#pick} "$(human $total)")" || return 0
+  for i in $pick; do
+    pv_clean $i
+    [[ -n $DRY_RUN ]] || ok "$(pv_where $i) · $(pv_label $i)"
+  done
+  (( ${PV_CAT[(I)cookies]} )) && for i in $pick; do [[ $PV_CAT[i] == cookies ]] && { print "  ${D}$T[pv_note]${N}"; break }; done
+  print
+  log_hist m15 $total
+  celebrate "$(t pv_done "$(human $total)")"
+}
+
 do_history() {
   title "$T[mh]"
   [[ -s $HIST_FILE ]] || { warn "$T[hi_empty]"; return 0 }
@@ -1399,7 +1694,9 @@ menu() {
     menu_item ✧ t "$T[mt]"
     menu_item ✦ d "$T[md]"
     menu_item ✧ s "$T[ms]"
-    menu_item ✧ h "$T[mh]"
+    menu_item ✦ m "$T[m14]"
+    menu_item ✧ p "$T[m15]"
+    menu_item ✦ h "$T[mh]"
     menu_item ⋆ q "$T[mq]"
     print "  ${D}╰──────────────────────────────────────────────╯${N}\n"
     c=
@@ -1418,6 +1715,8 @@ menu() {
       t|T) do_temp ;;
       d|D) do_dev ;;
       s|S) do_system ;;
+      m|M) do_maintenance ;;
+      p|P) do_privacy ;;
       h|H) do_history ;;
       q|Q) print "  ${Y}✦${N} ${D}$T[bye]${N}\n"; exit 0 ;;
       *) continue ;;
@@ -1431,13 +1730,13 @@ usage() {
   print "$(t usage $SCRIPT)\n"
   printf "  %-14s %s\n" ram "$T[u_ram]" trash "$T[u_trash]" uninstall "$T[u_un]" large "$T[u_lg]" caches "$T[u_ca]" \
     downloads "$T[u_dl]" startup "$T[u_st]" duplicates "$T[u_du]" temp "$T[u_te]" dev "$T[u_dv]" system "$T[u_sy]" \
-    auto "$T[u_auto]" history "$T[u_hist]"
+    maintenance "$T[u_mt]" privacy "$T[u_pv]" auto "$T[u_auto]" history "$T[u_hist]"
   print "  $T[u_menu]\n"
-  print "  $T[u_dry]\n  $T[u_yes]\n  $T[u_list]\n  $T[u_sel]\n  $T[u_opt]"
+  print "  $T[u_dry]\n  $T[u_yes]\n  $T[u_list]\n  $T[u_sel]\n  $T[u_opt]\n  $T[u_ck]"
 }
 
-if [[ -n $LIST && $CMD != (gros|large|caches|telechargements|downloads|demarrage|startup|doublons|duplicates|dev|temp|temporaires|corbeille|trash|auto) ]]; then
-  print -u2 -- "--list: caches temp trash auto large downloads duplicates startup dev"
+if [[ -n $LIST && $CMD != (gros|large|caches|telechargements|downloads|demarrage|startup|doublons|duplicates|dev|temp|temporaires|corbeille|trash|auto|entretien|maintenance|confidentialite|privacy) ]]; then
+  print -u2 -- "--list: caches temp trash auto large downloads duplicates startup dev maintenance privacy"
   exit 2
 fi
 
@@ -1453,6 +1752,8 @@ case $CMD in
   temp|temporaires) do_temp ;;
   dev) do_dev ;;
   systeme|system) do_system ;;
+  entretien|maintenance) do_maintenance ;;
+  confidentialite|privacy) do_privacy ;;
   auto) do_auto ;;
   historique|history) do_history ;;
   ""|menu) menu ;;

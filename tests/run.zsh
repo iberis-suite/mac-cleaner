@@ -399,6 +399,77 @@ PATH=$FAKE:$PATH $BIN ram --yes </dev/null >/dev/null 2>&1
 check "sans SUDO_ASKPASS : sudo inchangé" eval '[[ -s $SANDBOX/sudo.log ]] && ! grep -q -- "-A" $SANDBOX/sudo.log'
 teardown
 
+mkbrowsers() {
+  local cr="$HOME/Library/Application Support/Google/Chrome" cc="$HOME/Library/Caches/Google/Chrome" p
+  for p in Default "Profile 1"; do
+    mkdir -p "$cr/$p/Network" "$cr/$p/GPUCache" "$cc/$p/Cache"
+    print h > "$cr/$p/History"; print v > "$cr/$p/Visited Links"; print c > "$cr/$p/Network/Cookies"
+    print g > "$cr/$p/GPUCache/data_0"; head -c 100000 /dev/urandom > "$cc/$p/Cache/blob"
+    print pref > "$cr/$p/Preferences"
+  done
+  mkdir -p "$cr/System Profile"; print h > "$cr/System Profile/History"
+  FF="$HOME/Library/Application Support/Firefox/Profiles/abc.default-release"
+  mkdir -p "$FF" "$HOME/Library/Caches/Firefox/Profiles/abc.default-release/cache2"
+  print c > "$FF/cookies.sqlite"; print k > "$HOME/Library/Caches/Firefox/Profiles/abc.default-release/cache2/entry"
+  sqlite3 "$FF/places.sqlite" "CREATE TABLE moz_places (id INTEGER PRIMARY KEY, url TEXT, visit_count INTEGER, last_visit_date INTEGER);
+    CREATE TABLE moz_historyvisits (id INTEGER PRIMARY KEY, place_id INTEGER);
+    CREATE TABLE moz_bookmarks (id INTEGER PRIMARY KEY, fk INTEGER);
+    INSERT INTO moz_places VALUES (1, 'https://favori.test', 3, 1), (2, 'https://visite.test', 5, 1);
+    INSERT INTO moz_historyvisits VALUES (1, 1), (2, 2), (3, 2);
+    INSERT INTO moz_bookmarks VALUES (1, 1);"
+}
+
+ffq() { sqlite3 "$FF/places.sqlite" "$1" }
+
+setup; mkbrowsers
+CR="$HOME/Library/Application Support/Google/Chrome"; CC="$HOME/Library/Caches/Google/Chrome"
+out=$($BIN privacy --dry-run </dev/null)
+check "privacy --dry-run : Chrome (2 profils) et Firefox listés" eval '[[ $out == *"Chrome · Default"* && $out == *"Chrome · Profile 1"* && $out == *"Firefox · abc.default-release"* && $out != *"System Profile"* ]]'
+check "privacy --dry-run : cookies gardés, aperçu des commandes" eval '[[ $out == *"Cookies  (gardé)"* && $out == *"[aperçu] rm -f ~/Library/Application Support/Google/Chrome/Default/History"* && $out != *"[aperçu]"*Network/Cookies* ]]'
+check "privacy --dry-run : rien supprimé" eval '[[ -f $CR/Default/History && -f $CC/Default/Cache/blob && $(ffq "SELECT count(*) FROM moz_historyvisits") == 3 && ! -e $HIST ]]'
+out=$($BIN privacy --list </dev/null)
+check "privacy --list : TSV, catégorie et navigateur" eval 'tsv_ok "$out" && [[ $(col "$out" "Profile 1 · Cookies" 5) == cookies && $(col "$out" "Profile 1 · Cookies" 6) == chrome && $(col "$out" "abc.default-release · Historique" 6) == firefox ]]'
+$BIN privacy --yes </dev/null >/dev/null
+check "privacy --yes : historique et cache effacés" eval '[[ ! -e $CR/Default/History && ! -e "$CR/Profile 1/Visited Links" ]] && empty_dir $CC/Default && empty_dir "$CR/Profile 1/GPUCache" && empty_dir $HOME/Library/Caches/Firefox/Profiles/abc.default-release'
+check "privacy --yes : cookies et préférences gardés" eval '[[ -f $CR/Default/Network/Cookies && -f "$CR/Profile 1/Network/Cookies" && -f $FF/cookies.sqlite && -f $CR/Default/Preferences && -f "$CR/System Profile/History" ]]'
+check "privacy --yes : Firefox sans visites, favori gardé" eval '[[ $(ffq "SELECT count(*) FROM moz_historyvisits") == 0 && $(ffq "SELECT url FROM moz_places") == https://favori.test ]]'
+check "privacy --yes : historique m15" eval 'grep -q "	m15	" $HIST'
+$BIN privacy --yes --cookies </dev/null >/dev/null
+check "privacy --yes --cookies : cookies effacés" eval '[[ ! -e $CR/Default/Network/Cookies && ! -e $FF/cookies.sqlite ]]'
+teardown
+
+setup; mkbrowsers; runapp "Google Chrome" com.google.Chrome
+CR="$HOME/Library/Application Support/Google/Chrome"
+out=$($BIN privacy --yes </dev/null)
+check "privacy : navigateur ouvert ignoré et signalé" eval '[[ -f $CR/Default/History && -f $HOME/Library/Caches/Google/Chrome/Default/Cache/blob && $out == *"Ignoré, navigateur ouvert : Chrome"* && $(ffq "SELECT count(*) FROM moz_historyvisits") == 0 ]]'
+out=$($BIN privacy --list </dev/null)
+check "privacy --list : navigateur ouvert en index 0" eval '[[ $(col "$out" "	running	" 1) == 0 && $(col "$out" "	running	" 6) == chrome ]]'
+teardown
+
+setup; mkdir -p $HOME/Library/Safari
+chmod 000 $HOME/Library/Safari
+out=$($BIN privacy --dry-run </dev/null)
+check "privacy : Safari illisible signalé" eval '[[ $out == *"Safari : accès complet au disque requis"* ]]'
+chmod 755 $HOME/Library/Safari
+teardown
+
+setup
+FAKE=$SANDBOX/bin; mkdir -p $FAKE
+for b in sudo dscacheutil killall mdutil periodic lsregister; do
+  print -r -- '#!/bin/zsh
+print -r -- "'$b' $*" >> '$SANDBOX'/calls.log' > $FAKE/$b
+  chmod +x $FAKE/$b
+done
+out=$(PATH=$FAKE:$PATH MAC_CLEANER_LSREGISTER=$FAKE/lsregister $BIN maintenance --dry-run </dev/null)
+check "maintenance --dry-run : aucune commande lancée" eval '[[ ! -e $SANDBOX/calls.log && ! -e $HIST ]]'
+check "maintenance --dry-run : les 4 opérations en aperçu" eval '[[ $out == *"[aperçu] sudo dscacheutil -flushcache"* && $out == *"[aperçu] sudo killall -HUP mDNSResponder"* && $out == *"[aperçu] sudo mdutil -E /"* && $out == *"[aperçu] $FAKE/lsregister -kill -r -domain local -domain system -domain user"* && $out == *"[aperçu] sudo periodic daily weekly monthly"* && $out != *"›"*"(o/N)"* ]]'
+out=$(PATH=$FAKE:$PATH MAC_CLEANER_LSREGISTER=$FAKE/lsregister $BIN maintenance --list </dev/null)
+check "maintenance --list : 4 lignes, root ou user" eval 'tsv_ok "$out" && [[ ${#${(f)out}} == 4 && $(col "$out" "	launch	" 6) == user && $(col "$out" "	dns	" 6) == root && ! -e $SANDBOX/calls.log ]]'
+PATH=$FAKE:$PATH MAC_CLEANER_LSREGISTER=$FAKE/lsregister $BIN maintenance --yes --select "1 3" </dev/null >/dev/null
+check "maintenance --yes --select : seules les opérations choisies" eval 'grep -q "^sudo dscacheutil -flushcache" $SANDBOX/calls.log && grep -q "^sudo killall -HUP mDNSResponder" $SANDBOX/calls.log && grep -q "^lsregister -kill -r -domain local -domain system -domain user" $SANDBOX/calls.log && ! grep -q mdutil $SANDBOX/calls.log && ! grep -q periodic $SANDBOX/calls.log'
+check "maintenance --yes : historique m14 à 0 Ko" eval 'grep -q "	m14	0	dns, launch" $HIST'
+teardown
+
 if (( $+commands[python3] )); then
   setup; mkcaches
   out=$(python3 -I $PTY $BIN -- 5 't\r' x q)

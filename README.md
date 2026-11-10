@@ -33,6 +33,8 @@ mac-cleaner duplicates   # identical files (same content), keeps the oldest copy
 mac-cleaner temp         # old files in /private/tmp and $TMPDIR, app copies left by updates (*.code_sign_clone)
 mac-cleaner dev          # merged or idle git worktrees, Library/ of idle Unity projects
 mac-cleaner system       # swap, local Time Machine snapshots, APFS volumes, purgeable space
+mac-cleaner maintenance  # flush DNS cache, reindex Spotlight, rebuild "Open With", periodic scripts
+mac-cleaner privacy      # browser history, cookies and cache (Safari, Chrome, Firefox, Brave, Edge, Arc)
 mac-cleaner auto         # everything safe in one pass: caches, logs, dev caches, Homebrew, old temp files, Trash
 mac-cleaner history      # what was freed, and when
 ```
@@ -42,6 +44,7 @@ Options, for any command:
 ```sh
 --dry-run, -n   # preview what would be done, delete nothing
 --yes, -y       # do not ask for confirmation (e.g. `mac-cleaner auto --yes` in a weekly job)
+--cookies       # privacy: also erase cookies with --yes
 ```
 
 - Uninstalled apps, large files, old downloads, duplicates and startup items go to the **Trash**, so you can put them back.
@@ -51,6 +54,8 @@ Options, for any command:
 - `temp` removes entries of `/private/tmp` and `$TMPDIR` older than 3 days (`MAC_CLEANER_TEMP_DAYS`) that you own and that no process has open (checked with `lsof`), plus `*.code_sign_clone` copies of apps that are not running. APFS clones can share blocks, so the real gain is measured with `df` before and after.
 - `dev` scans `MAC_CLEANER_PROJECTS` (default: home folder) for git repositories. A worktree is offered for removal only if it is clean, no process uses it, it has not been touched in the last day, and its branch is merged into the main branch or it has been idle for 14 days (`MAC_CLEANER_DEV_DAYS`). It is removed with `git worktree remove` (never `rm`), branches are kept, and orphaned worktrees are pruned. Separately, it can empty the `Library/` folder of Unity projects that no Unity instance has open and that did not change in 14 days: Unity rebuilds it next time, which takes a while.
 - `system` only reports, without sudo: swap, local snapshots, APFS volumes, purgeable space. Swap is only really freed by a restart. If you accept, it runs `sudo tmutil thinlocalsnapshots / 999999999999 4` and `sudo purge`.
+- `maintenance` runs `sudo dscacheutil -flushcache` and `sudo killall -HUP mDNSResponder`, `sudo mdutil -E /`, `lsregister -kill -r -domain local -domain system -domain user` (full path, as you) and `sudo periodic daily weekly monthly` when `periodic` exists. `--dry-run` only prints the commands; `--yes` runs them all; otherwise pick them by number. Nothing is deleted.
+- `privacy` lists history, cookies and cache of every installed browser and profile, with sizes. A browser that is open is skipped and listed as such. Safari needs Full Disk Access: without it, it says so. `--yes` takes history and cache but never cookies (that would sign you out of every site): cookies only when picked by number or with `--cookies`. Files are deleted for good, after confirmation. Firefox history is cleared inside `places.sqlite`, so bookmarks are kept.
 - `auto` includes `temp` (never clones of running apps), but never `dev` nor Unity `Library/`: those are always on demand.
 - `node_modules` folders (and git repositories for `dev`) are scanned in your home folder. Point to other folders with `MAC_CLEANER_PROJECTS="$HOME:/path/to/projects"`. A project counts as idle when none of its files changed in 90 days.
 - Skip some cache entries with `MAC_CLEANER_SKIP="brew docker"`.
@@ -76,6 +81,9 @@ mac-cleaner caches --yes --select "1 4"
 mac-cleaner temp --list                     # type = tmp or clone; kept = clone of a running app
 mac-cleaner temp --yes --select "2 5"
 mac-cleaner trash --list                    # one line per top-level item of the Trash, type = file or dir
+mac-cleaner maintenance --list              # index 0 = not available here; 6th column root or user
+mac-cleaner maintenance --yes --select "1 3"
+mac-cleaner privacy --list                  # type = history, cookies or cache, 6th column = browser; index 0 = running or noaccess
 mac-cleaner auto --list                     # one line per section auto would run, in order: index, KB, label, -, section
 ```
 
@@ -100,6 +108,8 @@ Pour un Mac de développement plein :
 - `mac-cleaner system` : swap, instantanés Time Machine, volumes APFS, purgeable, sans sudo. Le swap ne se libère vraiment qu'au redémarrage. Avec ton accord : `tmutil thinlocalsnapshots` et `purge` en sudo.
 - `mac-cleaner caches --dry-run` ou `--yes` : plus de choix au clavier, tout sauf Docker et `node_modules` (la sélection de `auto`).
 - `mac-cleaner uninstall "/Applications/Nom.app" --dry-run` (ou `--yes`) : traite directement cette app, sans recherche ni question ; les apps Apple restent refusées.
+- `mac-cleaner maintenance` : vider le cache DNS, réindexer Spotlight, reconstruire la base « Ouvrir avec » (`lsregister`), lancer les scripts périodiques s'ils existent. Ce qui demande root passe par `sudo`. `--dry-run` affiche les commandes sans rien lancer, `--yes` lance tout, sinon choix par numéros.
+- `mac-cleaner privacy` : historique, cookies et cache de Safari, Chrome, Firefox, Brave, Edge et Arc (tous les profils), avec les tailles. Un navigateur ouvert est ignoré et signalé ; Safari demande l'accès complet au disque. `--yes` prend l'historique et le cache, jamais les cookies (ils déconnectent de tous les sites) : les cookies seulement au choix par numéros ou avec `--cookies`. Suppression définitive après confirmation ; l'historique de Firefox est effacé dans `places.sqlite`, les favoris restent.
 - `auto` inclut `temp`, jamais `dev` ni `Library/` Unity. `--dry-run` montre ce qui serait fait sans rien supprimer. Installation : `brew install chaibialaa/tap/mac-cleaner`, puis `mac-cleaner`.
 - Scripts et app : `--list` pour `large`, `downloads`, `duplicates`, `startup`, `dev`, `caches` (6e colonne `safe` ou `excluded`), `temp` (type `tmp` ou `clone`), `trash` (un élément de premier niveau par ligne) et `auto` (une ligne par section, dans l'ordre d'exécution) ; aucune action, une ligne TSV par élément : index, Ko, libellé, chemin, type ; index `0` = non sélectionnable, `skipped` (cache d'une app ouverte) ou `kept` (copie d'une app ouverte) ; `--select "1 3"` ou `all` (répond au choix avec les mêmes index, avec `--dry-run` ou `--yes`), `--select-unity` pour `dev`, et `--min`, `--days`, `--dir` pour les paramètres de `large`, `downloads`, `duplicates`. Avec `SUDO_ASKPASS`, le CLI appelle `sudo -A` : plus besoin de terminal.
 - L'app de barre des menus (`menubar/`) peut programmer `mac-cleaner auto --yes` chaque lundi à 10 h (LaunchAgent, journal dans `~/Library/Logs/mac-cleaner-weekly.log`).
