@@ -1,6 +1,6 @@
 # mac-cleaner
 
-[![tests](https://github.com/chaibialaa/mac-cleaner/actions/workflows/tests.yml/badge.svg)](https://github.com/chaibialaa/mac-cleaner/actions/workflows/tests.yml)
+[![tests](https://github.com/iberis-suite/mac-cleaner/actions/workflows/tests.yml/badge.svg)](https://github.com/iberis-suite/mac-cleaner/actions/workflows/tests.yml)
 
 A tiny, dependency-free macOS cleaner for the terminal. One zsh script, no daemon, no telemetry.
 
@@ -13,8 +13,12 @@ A tiny, dependency-free macOS cleaner for the terminal. One zsh script, no daemo
 ## Install
 
 ```sh
-brew install chaibialaa/tap/mac-cleaner
+brew install iberis-suite/tap/mac-cleaner
 ```
+
+If Homebrew asks you to trust the tap first: `brew trust iberis-suite/tap`, then run the install again.
+
+Menu bar app: https://github.com/iberis-suite/mac-cleaner-app
 
 ## Usage
 
@@ -62,7 +66,7 @@ Options, for any command:
 - Apple system apps are never uninstalled.
 - The interface follows your system language (English or French). Force it with `MAC_CLEANER_LANG=en` or `fr`.
 - `NO_COLOR=1` disables colors and animations.
-- The menu bar app (`menubar/`) can schedule `mac-cleaner auto --yes` every Monday at 10:00 (a LaunchAgent, log in `~/Library/Logs/mac-cleaner-weekly.log`).
+- The [menu bar app](https://github.com/iberis-suite/mac-cleaner-app) can schedule `mac-cleaner auto --yes` every Monday at 10:00 (a LaunchAgent, log in `~/Library/Logs/mac-cleaner-weekly.log`).
 
 ## Scripting
 
@@ -110,9 +114,10 @@ Pour un Mac de développement plein :
 - `mac-cleaner uninstall "/Applications/Nom.app" --dry-run` (ou `--yes`) : traite directement cette app, sans recherche ni question ; les apps Apple restent refusées.
 - `mac-cleaner maintenance` : vider le cache DNS, réindexer Spotlight, reconstruire la base « Ouvrir avec » (`lsregister`), lancer les scripts périodiques s'ils existent. Ce qui demande root passe par `sudo`. `--dry-run` affiche les commandes sans rien lancer, `--yes` lance tout, sinon choix par numéros.
 - `mac-cleaner privacy` : historique, cookies et cache de Safari, Chrome, Firefox, Brave, Edge et Arc (tous les profils), avec les tailles. Un navigateur ouvert est ignoré et signalé ; Safari demande l'accès complet au disque. `--yes` prend l'historique et le cache, jamais les cookies (ils déconnectent de tous les sites) : les cookies seulement au choix par numéros ou avec `--cookies`. Suppression définitive après confirmation ; l'historique de Firefox est effacé dans `places.sqlite`, les favoris restent.
-- `auto` inclut `temp`, jamais `dev` ni `Library/` Unity. `--dry-run` montre ce qui serait fait sans rien supprimer. Installation : `brew install chaibialaa/tap/mac-cleaner`, puis `mac-cleaner`.
+- `auto` inclut `temp`, jamais `dev` ni `Library/` Unity. `--dry-run` montre ce qui serait fait sans rien supprimer. Installation : `brew install iberis-suite/tap/mac-cleaner` (si Homebrew le demande, d'abord `brew trust iberis-suite/tap`), puis `mac-cleaner`.
 - Scripts et app : `--list` pour `large`, `downloads`, `duplicates`, `startup`, `dev`, `caches` (6e colonne `safe` ou `excluded`), `temp` (type `tmp` ou `clone`), `trash` (un élément de premier niveau par ligne) et `auto` (une ligne par section, dans l'ordre d'exécution) ; aucune action, une ligne TSV par élément : index, Ko, libellé, chemin, type ; index `0` = non sélectionnable, `skipped` (cache d'une app ouverte) ou `kept` (copie d'une app ouverte) ; `--select "1 3"` ou `all` (répond au choix avec les mêmes index, avec `--dry-run` ou `--yes`), `--select-unity` pour `dev`, et `--min`, `--days`, `--dir` pour les paramètres de `large`, `downloads`, `duplicates`. Avec `SUDO_ASKPASS`, le CLI appelle `sudo -A` : plus besoin de terminal.
-- L'app de barre des menus (`menubar/`) peut programmer `mac-cleaner auto --yes` chaque lundi à 10 h (LaunchAgent, journal dans `~/Library/Logs/mac-cleaner-weekly.log`).
+- L'app de barre des menus peut programmer `mac-cleaner auto --yes` chaque lundi à 10 h (LaunchAgent, journal dans `~/Library/Logs/mac-cleaner-weekly.log`).
+- App de barre des menus : https://github.com/iberis-suite/mac-cleaner-app
 
 ## Tests
 
