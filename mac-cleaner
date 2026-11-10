@@ -1,7 +1,7 @@
 #!/bin/zsh
 setopt null_glob extended_glob
 
-VERSION=1.1.0
+VERSION=1.2.0
 SCRIPT=${0:t}
 
 DRY_RUN= YES= CMD=
@@ -64,8 +64,8 @@ if [[ $LANG_UI == fr ]]; then
     c_apps "Caches des apps" c_logs "Journaux (logs)" c_xcode "Xcode DerivedData" c_devsupport "Xcode iOS DeviceSupport"
     c_sim "Caches simulateurs iOS" c_npm "Cache npm" c_composer "Cache Composer" c_gradle "Caches Gradle"
     c_brew "Homebrew (anciennes versions, téléchargements)" c_docker "Docker (images inutilisées, conteneurs arrêtés)"
-    c_nodemod "node_modules inactifs depuis 90 j (%s projet(s))"
-    au_desc "Seulement ce qui est sans risque : caches, journaux, caches de dev, Homebrew, corbeille."
+    c_nodemod "node_modules inactifs depuis 90 j (%s projet(s))" ca_kept "gardés"
+    au_desc "Seulement ce qui est sans risque : caches (hors apps en cours), journaux, caches de dev, Homebrew, fichiers temporaires anciens, corbeille."
     au_ask "Tout nettoyer ?"
     dl_days "Plus vieux que combien de jours" dl_spin "Exploration de ~/Downloads…"
     dl_none "Aucun élément de plus de %s jours dans Téléchargements." dl_age "%s j"
@@ -86,6 +86,35 @@ if [[ $LANG_UI == fr ]]; then
     u_dl "vieux fichiers de Téléchargements" u_st "apps et services lancés au démarrage" u_du "fichiers en double"
     u_auto "tout ce qui est sans risque en un passage" u_hist "ce qui a été libéré, et quand"
     u_menu "(sans commande : menu interactif)"
+    u_te "fichiers temporaires anciens et copies d'apps laissées par les mises à jour"
+    u_dv "worktrees git fusionnés ou inactifs, Library/ des projets Unity inactifs"
+    u_sy "swap, instantanés Time Machine, volumes APFS, purgeable"
+    mt "Fichiers temporaires" md "Projets de dev (worktrees, Unity)" ms "Système (swap, instantanés)"
+    ca_skip "Ignorés, app en cours : %s"
+    te_spin "Recherche des fichiers temporaires…" te_tmp "Temporaires de plus de %s j (%s)"
+    te_clone "Copies d'apps laissées par les mises à jour (%s)" te_none "Aucun fichier temporaire ancien à supprimer."
+    te_skip "Gardé, app en cours : %s" te_more "… et %s autre(s)"
+    te_note "Les copies APFS peuvent partager leurs blocs : du peut surestimer, l'espace réellement regagné est mesuré avec df."
+    te_ask "Supprimer ces fichiers temporaires (définitif) ?"
+    te_done "Espace réellement regagné (df) : %s · estimé (du) : %s"
+    dv_spin "Recherche des dépôts git et des projets Unity…" dv_wt "Worktrees git supprimables"
+    dv_wt_none "Aucun worktree à supprimer (propre, sans processus, fusionné ou inactif depuis %s j)."
+    dv_merged "fusionnée dans %s" dv_idle "inactif depuis %s j" dv_detached "(détaché)"
+    dv_prune "%s worktree(s) orphelin(s) : git worktree prune"
+    dv_wt_pick "Worktrees à supprimer (ex. 1 3), « t » = tout, vide = rien"
+    dv_wt_ask "Supprimer %s worktree(s) avec git worktree remove ? Les branches sont gardées."
+    dv_wt_fail "git worktree remove a refusé : %s"
+    dv_un "Dossiers Library/ de projets Unity inactifs"
+    dv_un_warn "Unity le recréera à la prochaine ouverture, ce qui prend du temps (réimport de tous les assets)."
+    dv_un_none "Aucun projet Unity inactif depuis %s j." dv_un_pick "Projets dont vider Library/ (ex. 1 3), « t » = tout, vide = rien"
+    dv_un_ask "Vider %s dossier(s) Library/ ?" dv_done "%s libérés"
+    sy_spin "Lecture de l'état du système…" sy_swap "Échange (swap) : %s utilisés sur %s"
+    sy_snap "Instantanés locaux Time Machine : %s" sy_cont "Conteneur APFS %s : %s utilisés sur %s · %s non alloués"
+    sy_free "Libre : %s · disponible en comptant le purgeable : %s · purgeable : environ %s"
+    sy_reboot "Le swap (volume VM) ne se libère vraiment qu'au redémarrage ; fermer les apps gourmandes le fait seulement baisser."
+    sy_note "Le purgeable et les instantanés locaux sont libérés par macOS quand la place manque ; on peut les amincir tout de suite."
+    sy_ask "Avec sudo : amincir les instantanés locaux (tmutil) et purger la mémoire ?"
+    sy_done "Espace libre : %s → %s"
     u_dry "--dry-run, -n   aperçu : montre ce qui serait fait, sans rien supprimer"
     u_yes "--yes, -y       ne demande pas de confirmation"
   )
@@ -121,8 +150,8 @@ else
     c_apps "App caches" c_logs "Logs" c_xcode "Xcode DerivedData" c_devsupport "Xcode iOS DeviceSupport"
     c_sim "iOS Simulator caches" c_npm "npm cache" c_composer "Composer cache" c_gradle "Gradle caches"
     c_brew "Homebrew (old versions, downloads)" c_docker "Docker (unused images, stopped containers)"
-    c_nodemod "node_modules idle for 90 days (%s project(s))"
-    au_desc "Only what is safe: caches, logs, dev caches, Homebrew, Trash."
+    c_nodemod "node_modules idle for 90 days (%s project(s))" ca_kept kept
+    au_desc "Only what is safe: caches (except running apps), logs, dev caches, Homebrew, old temporary files, Trash."
     au_ask "Clean everything?"
     dl_days "Older than how many days" dl_spin "Scanning ~/Downloads…"
     dl_none "Nothing older than %s days in Downloads." dl_age "%s d"
@@ -143,6 +172,35 @@ else
     u_dl "old files in Downloads" u_st "apps and services launched at startup" u_du "duplicate files"
     u_auto "everything safe in one pass" u_hist "what was freed, and when"
     u_menu "(no command: interactive menu)"
+    u_te "old temporary files and app copies left by updates"
+    u_dv "merged or idle git worktrees, Library/ of idle Unity projects"
+    u_sy "swap, Time Machine snapshots, APFS volumes, purgeable"
+    mt "Temporary files" md "Dev projects (worktrees, Unity)" ms "System (swap, snapshots)"
+    ca_skip "Skipped, app running: %s"
+    te_spin "Looking for temporary files…" te_tmp "Temporary files older than %s days (%s)"
+    te_clone "App copies left by updates (%s)" te_none "No old temporary file to delete."
+    te_skip "Kept, app running: %s" te_more "… and %s more"
+    te_note "APFS clones may share blocks: du can overestimate, the space actually reclaimed is measured with df."
+    te_ask "Delete these temporary files (permanent)?"
+    te_done "Space actually reclaimed (df): %s · estimated (du): %s"
+    dv_spin "Looking for git repositories and Unity projects…" dv_wt "Removable git worktrees"
+    dv_wt_none "No worktree to remove (clean, no process, merged or idle for %s days)."
+    dv_merged "merged into %s" dv_idle "idle for %s days" dv_detached "(detached)"
+    dv_prune "%s orphaned worktree(s): git worktree prune"
+    dv_wt_pick "Worktrees to remove (e.g. 1 3), \"a\" = all, empty = none"
+    dv_wt_ask "Remove %s worktree(s) with git worktree remove? Branches are kept."
+    dv_wt_fail "git worktree remove refused: %s"
+    dv_un "Library/ folders of idle Unity projects"
+    dv_un_warn "Unity will rebuild it next time the project opens, which takes a while (all assets are reimported)."
+    dv_un_none "No Unity project idle for %s days." dv_un_pick "Projects whose Library/ to empty (e.g. 1 3), \"a\" = all, empty = none"
+    dv_un_ask "Empty %s Library/ folder(s)?" dv_done "%s freed"
+    sy_spin "Reading system state…" sy_swap "Swap: %s used of %s"
+    sy_snap "Local Time Machine snapshots: %s" sy_cont "APFS container %s: %s used of %s · %s not allocated"
+    sy_free "Free: %s · available including purgeable: %s · purgeable: about %s"
+    sy_reboot "Swap (the VM volume) is only really freed by a restart; quitting memory-hungry apps only lowers it."
+    sy_note "Purgeable space and local snapshots are freed by macOS when space runs low; they can be thinned right now."
+    sy_ask "With sudo: thin local snapshots (tmutil) and purge memory?"
+    sy_done "Free space: %s → %s"
     u_dry "--dry-run, -n   preview what would be done, delete nothing"
     u_yes "--yes, -y       do not ask for confirmation"
   )
@@ -466,6 +524,66 @@ CDIR=(
   npm "$HOME/.npm/_cacache" composer "$HOME/.composer/cache" gradle "$HOME/.gradle/caches"
 )
 
+typeset -A RUN_SET
+typeset -a RUN_IDS RUN_APPS CA_DEL CA_KEEP
+RUN_LOADED=
+
+load_running() {
+  [[ -n $RUN_LOADED ]] && return 0
+  RUN_LOADED=1
+  local c app bid
+  local -A seen
+  for c in ${(f)"$(ps -axo comm= 2>/dev/null)"}; do
+    RUN_SET[${(L)c:t}]=1
+    [[ $c == *.app/Contents/* ]] || continue
+    for app in "${c%%.app/Contents/*}.app" "${c%.app/Contents/*}.app"; do
+      (( $+seen[$app] )) && continue
+      seen[$app]=1
+      RUN_APPS+=( ${(L)app:t:r} )
+      bid=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist" 2>/dev/null) && RUN_IDS+=( ${(L)bid} )
+    done
+  done
+  RUN_IDS=( ${(u)RUN_IDS} ) RUN_APPS=( ${(u)RUN_APPS} )
+  for c in $RUN_IDS $RUN_APPS; do RUN_SET[$c]=1; done
+}
+
+in_use() {
+  load_running
+  local n=${(L)${1%.code_sign_clone}} k
+  (( $+RUN_SET[$n] )) && return 0
+  [[ $n == *.* ]] && (( $+RUN_SET[${n##*.}] )) && return 0
+  for k in $RUN_IDS; do [[ $n == ${(b)k}.* || $k == ${(b)n}.* ]] && return 0; done
+  for k in $RUN_APPS; do [[ $k == ${(b)n}\ * ]] && return 0; done
+  return 1
+}
+
+open_filter() {
+  local cand=$(mktemp -t mac-cleaner)
+  cat > $cand
+  lsof -nP -w -Fn 2>/dev/null | awk -v cand="$cand" '
+    BEGIN { while ((getline l < cand) > 0) { c[l] = 1; o[++n] = l } }
+    /^n\// { p = substr($0, 2); while (p != "") { if (p in c) u[p] = 1; sub(/\/[^\/]*$/, "", p) } }
+    END { for (i = 1; i <= n; i++) if (!(o[i] in u)) print o[i] }'
+  rm -f $cand
+}
+
+apps_split() {
+  CA_DEL=() CA_KEEP=()
+  local e
+  for e in $CDIR[apps]/*(DN); do
+    if in_use ${e:t}; then CA_KEEP+=( "$e" ); else CA_DEL+=( "$e" ); fi
+  done
+}
+
+skip_note() {
+  local key=$1; shift
+  (( $# )) || return 0
+  local -a n=( ${@:t} )
+  local s=${(j:, :)n[1,8]}
+  (( $# > 8 )) && s+=" $(t te_more $(( $# - 8 )))"
+  print "  ${D}$(t $key "$s")${N}"
+}
+
 cache_avail() {
   [[ " $MAC_CLEANER_SKIP " == *" $1 "* ]] && return 1
   case $1 in
@@ -504,6 +622,7 @@ cache_kb() {
     brew) brew_kb ;;
     docker) docker_kb ;;
     nodemod) nm_scan > $NM_LIST; local -a l=( ${(f)"$(nm_paths)"} ); sizek ${l:#} ;;
+    apps) sizek $CA_DEL ;;
     *) sizek $CDIR[$1]/*(DN) ;;
   esac
 }
@@ -521,6 +640,10 @@ cache_clean() {
     brew) act_q brew cleanup -s ;;
     docker) act_q docker system prune -af ;;
     nodemod) for d in ${(f)"$(nm_paths)"}; do [[ $d == */node_modules ]] && act_q rm -rf "$d"; done ;;
+    apps)
+      if [[ -n $DRY_RUN ]]; then dry "rm -rf ${CDIR[apps]/#$HOME/~}/… (${#CA_DEL}) · ${#CA_KEEP} $T[ca_kept]"; return 0; fi
+      for d in $CA_DEL; do [[ $d == $CDIR[apps]/?* ]] && rm -rf "$d" 2>/dev/null; done
+      ;;
     *)
       d=$CDIR[$k]
       [[ -d $d && $d == $HOME/?* ]] || return 0
@@ -532,6 +655,7 @@ cache_clean() {
 do_caches() {
   title "$T[ca_title]"
   NM_LIST=$(mktemp -t mac-cleaner)
+  apps_split
   local -a rows=( ${(f)"$(spin "$T[ca_spin]" scan_caches $CACHE_KEYS)"} ) keys sizes
   rows=( ${rows:#} )
   local r i total=0 max=0
@@ -541,6 +665,8 @@ do_caches() {
   for i in {1..${#keys}}; do
     printf "  ${M}%3d${N} %s %9s  %s\n" $i "$(bar ${sizes[i]} $max 16)" "$(human ${sizes[i]})" "$(cache_label ${keys[i]})"
   done
+  print
+  skip_note ca_skip $CA_KEEP
   print "\n  ${B}$(t total "$(human $total)")${N}\n"
   local sel freed=0
   ask sel "$T[ca_pick]"
@@ -557,22 +683,369 @@ do_caches() {
   [[ -z $DRY_RUN ]] && print "  ${D}$T[ca_note]${N}"
 }
 
+sel_idx() {
+  if [[ -n $DRY_RUN || -n $YES ]]; then (( $1 )) && seq 1 $1; return 0; fi
+  local sel
+  ask sel "$2"
+  pick_idx "$sel" $1
+}
+
+TEMP_DAYS=${MAC_CLEANER_TEMP_DAYS:-3}
+DEV_DAYS=${MAC_CLEANER_DEV_DAYS:-14}
+typeset -a TE_PATHS TE_KEEP TE_TMP TE_CLONE
+TE_KB=0
+
+temp_roots() {
+  local -a r
+  local d
+  if [[ -n $MAC_CLEANER_TMP_DIRS ]]; then r=( ${(s.:.)MAC_CLEANER_TMP_DIRS} )
+  else r=( /private/tmp ${TMPDIR:-$(getconf DARWIN_USER_TEMP_DIR 2>/dev/null)} ); fi
+  for d in $r; do [[ -d $d ]] && print -r -- ${d:A}; done | sort -u
+}
+
+clone_dirs() {
+  local -a r
+  local d
+  if [[ -n $MAC_CLEANER_CLONE_DIRS ]]; then r=( ${(s.:.)MAC_CLEANER_CLONE_DIRS} )
+  else r=( /private/var/folders/*/*/X(N/) ); [[ -n $TMPDIR ]] && r+=( ${TMPDIR:A:h}/X ); fi
+  for d in $r; do [[ -d $d && -r $d ]] && print -r -- ${d:A}; done | sort -u
+}
+
+temp_list() {
+  local root e
+  for root in ${(f)"$(temp_roots)"}; do
+    find "$root" -mindepth 1 -maxdepth 1 -user $UID \( -type f -o -type d \) -mtime +$TEMP_DAYS \
+      -not -name '.*' -not -name 'com.apple.*' -not -name TemporaryItems -not -name 'mac-cleaner*' 2>/dev/null |
+    while IFS= read -r e; do
+      [[ -d $e && -n $(find "$e" -mtime -$TEMP_DAYS -print -quit 2>/dev/null) ]] && continue
+      print -r -- "tmp	$e"
+    done
+  done
+  for root in ${(f)"$(clone_dirs)"}; do
+    for e in $root/*.code_sign_clone(DN); do
+      if in_use ${e:t}; then print -r -- "keep	$e"; else print -r -- "clone	$e"; fi
+    done
+  done
+}
+
+temp_scan() {
+  local -a rows=( ${(f)"$(temp_list)"} )
+  local -A kind
+  local r
+  for r in $rows; do kind[${r#*$'\t'}]=${r%%$'\t'*}; done
+  for r in ${(f)"$(for r in $rows; do [[ $r == keep* ]] || print -r -- ${r#*$'\t'}; done | open_filter)"}; do
+    [[ -n $r ]] && print -r -- "$kind[$r]	$(sizek "$r")	$r"
+  done
+  for r in ${(M)rows:#keep*}; do print -r -- "keep	0	${r#*$'\t'}"; done
+}
+
+temp_collect() {
+  TE_PATHS=() TE_KEEP=() TE_TMP=() TE_CLONE=() TE_KB=0
+  load_running
+  local -a rows=( ${(f)"$(spin "$T[te_spin]" temp_scan)"} )
+  local r k sz p
+  for r in ${rows:#}; do
+    k=${r%%$'\t'*}; r=${r#*$'\t'}; sz=${r%%$'\t'*}; p=${r#*$'\t'}
+    case $k in
+      keep) TE_KEEP+=( "$p" ) ;;
+      tmp) TE_TMP+=( "$sz	$p" ); TE_PATHS+=( "$p" ); (( TE_KB += sz )) ;;
+      clone) TE_CLONE+=( "$sz	$p" ); TE_PATHS+=( "$p" ); (( TE_KB += sz )) ;;
+    esac
+  done
+  TE_TMP=( ${(On)TE_TMP} ) TE_CLONE=( ${(On)TE_CLONE} )
+}
+
+temp_group() {
+  local label=$1 r sum=0 i=0 max; shift
+  (( $# )) || return 0
+  for r in "$@"; do (( sum += ${r%%$'\t'*} )); done
+  max=${1%%$'\t'*}
+  printf "  ${B}%9s${N}  ${B}%s${N}\n" "$(human $sum)" "$label"
+  for r in "$@"; do
+    (( ++i > 6 )) && { print "  ${D}$(t te_more $(( $# - 6 )))${N}"; break }
+    printf "  %s %9s  ${D}%s${N}\n" "$(bar ${r%%$'\t'*} $max 8)" "$(human ${r%%$'\t'*})" "${${r#*$'\t'}/#$HOME/~}"
+  done
+  print
+}
+
+temp_show() {
+  temp_group "$(t te_tmp $TEMP_DAYS ${#TE_TMP})" $TE_TMP
+  temp_group "$(t te_clone ${#TE_CLONE})" $TE_CLONE
+  skip_note te_skip $TE_KEEP
+}
+
+temp_clean() {
+  local p root ok n=0
+  local -a roots=( ${(f)"$(temp_roots)"} ${(f)"$(clone_dirs)"} )
+  for p in $TE_PATHS; do
+    ok=
+    for root in $roots; do [[ $p == $root/?* ]] && ok=1; done
+    [[ -n $ok ]] || continue
+    if [[ -n $DRY_RUN ]]; then
+      (( ++n <= 10 )) && dry "rm -rf ${p/#$HOME/~}"
+    else
+      rm -rf -- "$p" 2>/dev/null
+    fi
+  done
+  (( n > 10 )) && print "  ${D}$(t te_more $(( n - 10 )))${N}"
+  return 0
+}
+
+free_kb() { local -a d=( $(disk_stats) ); print ${d[2]:-0} }
+
+do_temp() {
+  title "$T[mt]"
+  temp_collect
+  temp_show
+  (( ${#TE_PATHS} )) || { ok "$T[te_none]"; return 0 }
+  print "  ${B}$(t total "$(human $TE_KB)")${N}"
+  print "  ${D}$T[te_note]${N}\n"
+  confirm "$T[te_ask]" || return 0
+  local before=$(free_kb)
+  temp_clean
+  [[ -n $DRY_RUN ]] && { celebrate; return 0 }
+  sync
+  local real=$(( $(free_kb) - before ))
+  (( real < 0 )) && real=0
+  log_hist mt $real
+  print "  $(t te_done "${B}$(human $real)${N}" "$(human $TE_KB)")"
+  celebrate "$(t dv_done "$(human $real)")"
+}
+
+dev_roots() { print -rl -- ${(s.:.)${MAC_CLEANER_PROJECTS:-$HOME}} }
+
+git_repos() {
+  local root g
+  for root in ${(f)"$(dev_roots)"}; do
+    [[ -d $root ]] || continue
+    find "$root" -maxdepth 5 \( -name Library -o -name node_modules -o -name .Trash -o -name Temp \) -prune -o -name .git -type d -prune -print 2>/dev/null
+  done | while IFS= read -r g; do print -r -- ${g:h:A}; done | sort -u
+}
+
+wt_scan() {
+  local repo=$1 now=$(date +%s) r wt br head lock pr b st gd act m age reason first=1
+  local -a bases recs
+  for b in main master; do git -C "$repo" show-ref -q --verify refs/heads/$b && bases+=( $b ); done
+  b=$(git -C "$repo" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null) && bases+=( $b )
+  recs=( ${(f)"$(git -C "$repo" worktree list --porcelain 2>/dev/null | awk 'BEGIN { RS = ""; FS = "\n" } {
+    wt = br = hd = ""; lk = pr = 0
+    for (i = 1; i <= NF; i++) {
+      if ($i ~ /^worktree /) wt = substr($i, 10)
+      else if ($i ~ /^branch /) { br = substr($i, 8); sub(/^refs\/heads\//, "", br) }
+      else if ($i ~ /^HEAD /) hd = substr($i, 6)
+      else if ($i ~ /^locked/) lk = 1
+      else if ($i ~ /^prunable/) pr = 1
+    }
+    print wt "\t" (br == "" ? "-" : br) "\t" hd "\t" lk "\t" pr }')"} )
+  for r in $recs; do
+    IFS=$'\t' read -r wt br head lock pr <<< "$r"
+    if (( first )); then first=0; (( ${#bases} )) || { [[ $br != - ]] && bases+=( $br ) }; continue; fi
+    [[ $lock == 0 && $pr == 0 && -d $wt ]] || continue
+    st=$(GIT_OPTIONAL_LOCKS=0 git -C "$wt" status --porcelain 2>/dev/null) || continue
+    [[ -z $st ]] || continue
+    gd=$(git -C "$wt" rev-parse --absolute-git-dir 2>/dev/null) || continue
+    act=$(git -C "$wt" log -1 --format=%ct HEAD 2>/dev/null); act=${act:-0}
+    for m in $gd/HEAD $gd/index; do m=$(stat -f %m "$m" 2>/dev/null) && (( m > act )) && act=$m; done
+    (( now - act < 86400 )) && continue
+    age=$(( (now - act) / 86400 )) reason=
+    for b in $bases; do git -C "$repo" merge-base --is-ancestor "$head" "$b" 2>/dev/null && { reason="merged:$b"; break }; done
+    [[ -z $reason ]] && (( age >= DEV_DAYS )) && reason="idle:$age"
+    [[ -n $reason ]] && print -r -- "${wt:A}	$repo	$br	$reason"
+  done
+  b=$(git -C "$repo" worktree prune -n 2>&1 | grep -c .)
+  (( b )) && print -r -- "prune	$b	$repo"
+  return 0
+}
+
+unity_projects() {
+  local root f
+  for root in ${(f)"$(dev_roots)"}; do
+    [[ -d $root ]] || continue
+    find "$root" -maxdepth 7 \( -name Library -o -name node_modules -o -name .git -o -name Temp -o -name Assets \) -prune -o -path '*/ProjectSettings/ProjectVersion.txt' -print 2>/dev/null
+  done | while IFS= read -r f; do
+    f=${f:h:h:A}
+    [[ -d $f/Assets && -d $f/Library ]] && print -r -- $f
+  done | sort -u
+}
+
+unity_idle() {
+  local p=$1 l
+  for l in ${(f)2}; do [[ $l == (#i)*unity* && $l == *${(b)p}* ]] && return 1; done
+  [[ -z $(find "$p" \( -path "$p/Library" -o -path "$p/Temp" -o -path "$p/Logs" -o -path "$p/obj" -o -name .git \) -prune -o -mtime -$DEV_DAYS -print -quit 2>/dev/null) ]]
+}
+
+dev_scan() {
+  local repo r p psa
+  local -a wt un
+  local -A meta
+  for repo in ${(f)"$(git_repos)"}; do
+    for r in ${(f)"$(wt_scan "$repo")"}; do
+      [[ -z $r ]] && continue
+      [[ $r == prune* ]] && { print -r -- "$r"; continue }
+      wt+=( "${r%%$'\t'*}" ); meta[${r%%$'\t'*}]=${r#*$'\t'}
+    done
+  done
+  for p in ${(f)"$(print -rl -- $wt | open_filter)"}; do [[ -n $p ]] && print -r -- "wt	$(sizek "$p")	$p	$meta[$p]"; done
+  psa=$(ps -axo args= 2>/dev/null)
+  for p in ${(f)"$(unity_projects)"}; do unity_idle "$p" "$psa" && un+=( "$p" ); done
+  for p in ${(f)"$(print -rl -- $un | open_filter)"}; do [[ -n $p ]] && print -r -- "unity	$(sizek "$p/Library")	$p"; done
+  return 0
+}
+
+dv_reason() {
+  case $1 in
+    merged:*) t dv_merged ${1#merged:} ;;
+    idle:*) t dv_idle ${1#idle:} ;;
+  esac
+}
+
+lib_empty() {
+  local lib=$1/Library
+  [[ $lib == /?*/Library && -d $lib && -f $1/ProjectSettings/ProjectVersion.txt ]] || return 1
+  if [[ -n $DRY_RUN ]]; then dry "rm -rf ${lib/#$HOME/~}/*"; return 0; fi
+  local -a items=( $lib/*(DN) )
+  (( ${#items} )) && rm -rf -- $items 2>/dev/null
+  ok "${lib/#$HOME/~}"
+}
+
+do_dev() {
+  title "$T[md]"
+  local -a rows=( ${(f)"$(spin "$T[dv_spin]" dev_scan)"} )
+  local -a wp wk wr wb wn up uk prr prn f pick
+  local -A touched
+  local r max=0 i freed=0
+  for r in ${rows:#}; do
+    f=( "${(@ps:\t:)r}" )
+    case $f[1] in
+      wt) wk+=( $f[2] ); wp+=( "$f[3]" ); wr+=( "$f[4]" ); wb+=( "$f[5]" ); wn+=( "$f[6]" ) ;;
+      unity) uk+=( $f[2] ); up+=( "$f[3]" ) ;;
+      prune) prn+=( $f[2] ); prr+=( "$f[3]" ) ;;
+    esac
+  done
+  print "  ${B}$T[dv_wt]${N}\n"
+  if (( ${#wp} )); then
+    for i in {1..${#wp}}; do (( wk[i] > max )) && max=$wk[i]; done
+    for i in {1..${#wp}}; do
+      printf "  ${M}%3d${N} %s %9s  ${B}%s${N} ${D}· %s · %s${N}\n" $i "$(bar $wk[i] $max 12)" "$(human $wk[i])" "${wr[i]:t}" "${${wb[i]:#-}:-$T[dv_detached]}" "$(dv_reason $wn[i])"
+      print "        ${D}${wp[i]/#$HOME/~}${N}"
+    done
+  else
+    ok "$(t dv_wt_none $DEV_DAYS)"
+  fi
+  if (( ${#prr} )); then
+    for i in {1..${#prr}}; do print "  ${D}$(t dv_prune $prn[i]) · ${prr[i]/#$HOME/~}${N}"; done
+  fi
+  print
+  if (( ${#wp} )); then
+    for i in $(sel_idx ${#wp} "$T[dv_wt_pick]"); do pick+=( $i ); done
+    if (( ${#pick} )) && confirm "$(t dv_wt_ask ${#pick})"; then
+      for i in $pick; do
+        touched[$wr[i]]=1
+        if [[ -n $DRY_RUN ]]; then dry "git -C ${wr[i]/#$HOME/~} worktree remove ${wp[i]/#$HOME/~}"; (( freed += wk[i] )); continue; fi
+        if git -C "$wr[i]" worktree remove "$wp[i]" >/dev/null 2>&1; then ok "${wp[i]/#$HOME/~}"; (( freed += wk[i] ))
+        else err "$(t dv_wt_fail "${wp[i]/#$HOME/~}")"; fi
+      done
+    fi
+  fi
+  for r in $prr; do touched[$r]=1; done
+  for r in ${(k)touched}; do act_q git -C "$r" worktree prune; done
+  print "\n  ${B}$T[dv_un]${N}"
+  print "  ${Y}!${N} ${D}$T[dv_un_warn]${N}\n"
+  if (( ${#up} )); then
+    max=0
+    for i in {1..${#up}}; do (( uk[i] > max )) && max=$uk[i]; done
+    for i in {1..${#up}}; do
+      printf "  ${M}%3d${N} %s %9s  %s\n" $i "$(bar $uk[i] $max 12)" "$(human $uk[i])" "${up[i]/#$HOME/~}/Library"
+    done
+    print
+    pick=()
+    for i in $(sel_idx ${#up} "$T[dv_un_pick]"); do pick+=( $i ); done
+    if (( ${#pick} )) && confirm "$(t dv_un_ask ${#pick})"; then
+      for i in $pick; do lib_empty "$up[i]" && (( freed += uk[i] )); done
+    fi
+  else
+    ok "$(t dv_un_none $DEV_DAYS)"
+  fi
+  (( freed )) || return 0
+  print
+  log_hist md $freed
+  celebrate "$(t dv_done "$(human $freed)")"
+}
+
+apfs_report() {
+  local cont=$(diskutil info / 2>/dev/null | awk -F': *' '/APFS Container:/{print $2; exit}')
+  [[ -n $cont ]] || return 0
+  diskutil apfs list $cont 2>/dev/null | awk -v c=$cont '
+    function kb(s) { if (!match(s, /[0-9]+ B/)) return 0; return int(substr(s, RSTART, RLENGTH - 2) / 1024) }
+    /Size \(Capacity Ceiling\)/ { cap = kb($0) }
+    /Capacity In Use By Volumes/ { use = kb($0) }
+    /Capacity Not Allocated/ { na = kb($0) }
+    /APFS Volume Disk \(Role\)/ { role = $0; sub(/.*\(/, "", role); sub(/\).*/, "", role) }
+    /^[| +]*Name:/ { name = $0; sub(/.*Name: */, "", name); sub(/ \(.*/, "", name) }
+    /Capacity Consumed/ { print "vol\t" kb($0) "\t" name "\t" role }
+    END { print "cont\t" c "\t" cap "\t" use "\t" na }'
+}
+
+purgeable_kb() {
+  local v=$(osascript -l JavaScript -e 'ObjC.import("Foundation"); var r = $.NSURL.fileURLWithPath("/System/Volumes/Data").resourceValuesForKeysError(["NSURLVolumeAvailableCapacityForImportantUsageKey"], null); r.objectForKey("NSURLVolumeAvailableCapacityForImportantUsageKey").js' 2>/dev/null)
+  [[ $v == <-> ]] && print $(( v / 1024 )) || print 0
+}
+
+do_system() {
+  title "$T[ms]"
+  local -a w=( ${=$(sysctl -n vm.swapusage 2>/dev/null)} ) snaps rows f
+  print "  $(t sy_swap "${B}$(human $(to_kb ${w[6]:-0}))${N}" "$(human $(to_kb ${w[3]:-0}))")"
+  snaps=( ${(M)${(f)"$(tmutil listlocalsnapshots / 2>/dev/null)"}:#com.apple.*} )
+  print "  $(t sy_snap "${B}${#snaps}${N}")"
+  local s r
+  for s in $snaps; do print "      ${D}$s${N}"; done
+  rows=( ${(f)"$(spin "$T[sy_spin]" apfs_report)"} )
+  for r in ${(M)rows:#cont*}; do
+    f=( "${(@ps:\t:)r}" )
+    print "  $(t sy_cont $f[2] "${B}$(human $f[4])${N}" "$(human $f[3])" "$(human $f[5])")"
+  done
+  for r in ${(M)rows:#vol*}; do
+    f=( "${(@ps:\t:)r}" )
+    printf "      %9s  %s ${D}(%s)${N}\n" "$(human $f[2])" "$f[3]" "$f[4]"
+  done
+  local fr=$(free_kb) av=$(purgeable_kb)
+  (( av < fr )) && av=$fr
+  print "  $(t sy_free "${B}$(human $fr)${N}" "$(human $av)" "$(human $(( av - fr )))")\n"
+  print "  ${D}$T[sy_reboot]${N}"
+  print "  ${D}$T[sy_note]${N}\n"
+  confirm "$T[sy_ask]" || return 0
+  if [[ -n $DRY_RUN ]]; then dry "sudo tmutil thinlocalsnapshots / 999999999999 4"; dry "sudo purge"; celebrate; return 0; fi
+  sudo -p "  ${D}$T[sudo_prompt]${N} " true || return 0
+  spin "$T[sy_spin]" sudo tmutil thinlocalsnapshots / 999999999999 4 >/dev/null
+  spin "$T[ram_spin]" sudo purge
+  local after=$(free_kb)
+  log_hist ms $(( after > fr ? after - fr : 0 ))
+  celebrate "$(t sy_done "$(human $fr)" "$(human $after)")"
+}
+
 do_auto() {
   title "$T[m9]"
   print "  ${D}$T[au_desc]${N}\n"
   NM_LIST=$(mktemp -t mac-cleaner)
+  apps_split
   local -a rows=( ${(f)"$(spin "$T[ca_spin]" scan_caches $SAFE_KEYS)"} )
   rows=( ${rows:#} )
+  temp_collect
   local tk=$(sizek $TRASH_DIR/*(DN)) r s total=0
   for r in $rows; do
     s=${r#*$'\t'}; (( total += s ))
     printf "  %9s  %s\n" "$(human $s)" "$(cache_label ${r%%$'\t'*})"
   done
+  printf "  %9s  %s\n" "$(human $TE_KB)" "$T[mt]"
   printf "  %9s  %s\n" "$(human $tk)" "$T[trash_title]"
-  (( total += tk ))
+  (( total += tk + TE_KB ))
+  print
+  skip_note ca_skip $CA_KEEP
+  skip_note te_skip $TE_KEEP
   print "\n  ${B}$(t total "$(human $total)")${N}\n"
   confirm "$T[au_ask]" || { rm -f $NM_LIST; return 0 }
   for r in $rows; do cache_clean ${r%%$'\t'*}; done
+  temp_clean
   empty_trash
   rm -f $NM_LIST
   log_hist m9 $total
@@ -762,6 +1235,9 @@ menu() {
     menu_item ✦ 7 "$T[m7]"
     menu_item ✧ 8 "$T[m8]"
     menu_item ✦ 9 "$T[m9]"
+    menu_item ✧ t "$T[mt]"
+    menu_item ✦ d "$T[md]"
+    menu_item ✧ s "$T[ms]"
     menu_item ✧ h "$T[mh]"
     menu_item ⋆ q "$T[mq]"
     print "  ${D}╰──────────────────────────────────────────────╯${N}\n"
@@ -778,6 +1254,9 @@ menu() {
       7) do_startup ;;
       8) do_dupes ;;
       9) do_auto ;;
+      t|T) do_temp ;;
+      d|D) do_dev ;;
+      s|S) do_system ;;
       h|H) do_history ;;
       q|Q) print "  ${Y}✦${N} ${D}$T[bye]${N}\n"; exit 0 ;;
       *) continue ;;
@@ -790,7 +1269,8 @@ menu() {
 usage() {
   print "$(t usage $SCRIPT)\n"
   printf "  %-14s %s\n" ram "$T[u_ram]" trash "$T[u_trash]" uninstall "$T[u_un]" large "$T[u_lg]" caches "$T[u_ca]" \
-    downloads "$T[u_dl]" startup "$T[u_st]" duplicates "$T[u_du]" auto "$T[u_auto]" history "$T[u_hist]"
+    downloads "$T[u_dl]" startup "$T[u_st]" duplicates "$T[u_du]" temp "$T[u_te]" dev "$T[u_dv]" system "$T[u_sy]" \
+    auto "$T[u_auto]" history "$T[u_hist]"
   print "  $T[u_menu]\n"
   print "  $T[u_dry]\n  $T[u_yes]"
 }
@@ -804,6 +1284,9 @@ case $CMD in
   telechargements|downloads) do_downloads ;;
   demarrage|startup) do_startup ;;
   doublons|duplicates) do_dupes ;;
+  temp|temporaires) do_temp ;;
+  dev) do_dev ;;
+  systeme|system) do_system ;;
   auto) do_auto ;;
   historique|history) do_history ;;
   ""|menu) menu ;;

@@ -16,12 +16,55 @@ setup() {
   SANDBOX=$(mktemp -d)
   export HOME=$SANDBOX/home MAC_CLEANER_TRASH_DIR=$SANDBOX/trash MAC_CLEANER_LANG=fr MAC_CLEANER_TEST=1
   export MAC_CLEANER_SKIP="brew docker" MAC_CLEANER_PROJECTS=$SANDBOX/home/code
-  unset XDG_STATE_HOME NO_COLOR
-  mkdir -p $HOME $MAC_CLEANER_TRASH_DIR
+  export MAC_CLEANER_TMP_DIRS=$SANDBOX/tmp MAC_CLEANER_CLONE_DIRS=$SANDBOX/X
+  unset XDG_STATE_HOME NO_COLOR MAC_CLEANER_TEMP_DAYS MAC_CLEANER_DEV_DAYS
+  mkdir -p $HOME $MAC_CLEANER_TRASH_DIR $MAC_CLEANER_TMP_DIRS $MAC_CLEANER_CLONE_DIRS
   HIST=$HOME/.local/state/mac-cleaner/history.tsv
 }
 
-teardown() { rm -rf $SANDBOX }
+BG=()
+teardown() { (( ${#BG} )) && kill $BG 2>/dev/null; wait 2>/dev/null; BG=(); rm -rf $SANDBOX }
+
+runapp() {
+  mkdir -p "$HOME/Applications/$1.app/Contents/MacOS"
+  /usr/libexec/PlistBuddy -c "Add :CFBundleIdentifier string $2" "$HOME/Applications/$1.app/Contents/Info.plist" >/dev/null
+  ln -s /bin/sleep "$HOME/Applications/$1.app/Contents/MacOS/$1"
+  "$HOME/Applications/$1.app/Contents/MacOS/$1" 120 &
+  BG+=( $! )
+  sleep 0.3
+}
+
+old() { touch -t 202001010000 "$@" }
+
+gitc() { GIT_AUTHOR_DATE=2020-01-01T00:00:00 GIT_COMMITTER_DATE=2020-01-01T00:00:00 git -C "$@" }
+
+mkrepo() {
+  local r=$HOME/code/repo
+  mkdir -p $r && git -C $r init -q -b main && git -C $r config user.email t@t && git -C $r config user.name t
+  print a > $r/a; git -C $r add a; gitc $r commit -qm init
+  git -C $r worktree add -q -b fusionnee $r/../wt-fusionnee main
+  git -C $r worktree add -q -b sale $r/../wt-sale main; print x > $r/../wt-sale/nouveau
+  git -C $r worktree add -q -b vieille $r/../wt-vieille main
+  print v > $r/../wt-vieille/v; git -C $r/../wt-vieille add v; gitc $r/../wt-vieille commit -qm vieux
+  git -C $r worktree add -q -b active $r/../wt-active main
+  print n > $r/../wt-active/n; git -C $r/../wt-active add n; git -C $r/../wt-active commit -qm recent
+  git -C $r worktree add -q -b occupee $r/../wt-occupee main
+  git -C $r worktree add -q -b orpheline $r/../wt-orpheline main
+  rm -rf $r/../wt-orpheline
+  old $r/.git/worktrees/*/(HEAD|index)(N)
+  git -C $r config user.email t@t
+  ( cd $r/../wt-occupee && exec sleep 120 ) &
+  BG+=( $! )
+  sleep 0.3
+}
+
+mkunity() {
+  local p=$HOME/code/$1
+  mkdir -p $p/Assets $p/ProjectSettings $p/Library/ArtifactDB
+  print v > $p/ProjectSettings/ProjectVersion.txt; print s > $p/Assets/scene.unity
+  head -c 100000 /dev/urandom > $p/Library/ArtifactDB/blob
+  [[ $2 == old ]] && old $p/**/*(D) $p
+}
 
 mkcaches() {
   mkdir -p $HOME/Library/Caches/com.test.app $HOME/Library/Logs $HOME/.npm/_cacache/x
@@ -126,6 +169,72 @@ mkdir -p $HOME/Library/LaunchAgents
 out=$(printf '1\no\n' | $BIN startup)
 check "démarrage : agent listé" eval '[[ $out == *com.test.zzagent* ]]'
 check "démarrage : agent désactivé" eval '[[ -e $MAC_CLEANER_TRASH_DIR/com.test.zzagent.plist && ! -e $HOME/Library/LaunchAgents/com.test.zzagent.plist ]]'
+teardown
+
+setup; mkcaches; runapp ZzRun com.test.zzrun
+mkdir -p $HOME/Library/Caches/com.test.zzrun; print c > $HOME/Library/Caches/com.test.zzrun/cache
+out=$(print 't' | $BIN caches)
+check "caches : cache d'une app en cours gardé" eval '[[ -f $HOME/Library/Caches/com.test.zzrun/cache ]]'
+check "caches : les autres vidés" eval '[[ ! -e $HOME/Library/Caches/com.test.app ]]'
+check "caches : app ignorée listée" eval '[[ $out == *"Ignorés, app en cours"*com.test.zzrun* ]]'
+teardown
+
+setup; runapp ZzRun com.test.zzrun
+T1=$MAC_CLEANER_TMP_DIRS X1=$MAC_CLEANER_CLONE_DIRS
+print a > $T1/vieux.log; print b > $T1/recent.log
+mkdir -p $T1/vieuxdossier $T1/dossiervivant; print c > $T1/vieuxdossier/f; print d > $T1/dossiervivant/f
+print e > $T1/ouvert.log
+old $T1/vieux.log $T1/vieuxdossier/f $T1/vieuxdossier $T1/dossiervivant $T1/ouvert.log
+sleep 120 < $T1/ouvert.log &
+BG+=( $! )
+mkdir -p $X1/com.test.zzrun.code_sign_clone $X1/com.test.parti.code_sign_clone
+print x > $X1/com.test.zzrun.code_sign_clone/f; print y > $X1/com.test.parti.code_sign_clone/f
+sleep 0.3
+out=$($BIN temp --dry-run)
+check "temp --dry-run ne supprime rien" eval '[[ -f $T1/vieux.log && -d $X1/com.test.parti.code_sign_clone ]]'
+check "temp --dry-run parle de df et des clones APFS" eval '[[ $out == *df* && $out == *APFS* ]]'
+out=$($BIN temp --yes)
+check "temp : vieux fichier et vieux dossier supprimés" eval '[[ ! -e $T1/vieux.log && ! -e $T1/vieuxdossier ]]'
+check "temp : fichier récent gardé" eval '[[ -f $T1/recent.log ]]'
+check "temp : dossier avec contenu récent gardé" eval '[[ -f $T1/dossiervivant/f ]]'
+check "temp : fichier ouvert par un processus gardé" eval '[[ -f $T1/ouvert.log ]]'
+check "temp : clone d'app arrêtée supprimé" eval '[[ ! -e $X1/com.test.parti.code_sign_clone ]]'
+check "temp : clone d'app en cours gardé et signalé" eval '[[ -d $X1/com.test.zzrun.code_sign_clone && $out == *"app en cours"*com.test.zzrun* ]]'
+check "temp : espace réel df affiché" eval '[[ $out == *"réellement regagné (df)"* ]]'
+check "temp écrit l'historique" eval 'grep -q "	mt	" $HIST'
+teardown
+
+setup; print a > $MAC_CLEANER_TMP_DIRS/vieux.log; old $MAC_CLEANER_TMP_DIRS/vieux.log
+$BIN auto --yes >/dev/null
+check "auto inclut temp" eval '[[ ! -e $MAC_CLEANER_TMP_DIRS/vieux.log ]]'
+teardown
+
+setup; mkrepo; mkunity vieux-unity old; mkunity unity-actif new
+W=$HOME/code
+out=$($BIN dev --dry-run)
+check "dev --dry-run ne supprime rien" eval '[[ -d $W/wt-fusionnee && -f $W/vieux-unity/Library/ArtifactDB/blob ]]'
+check "dev --dry-run propose git worktree remove" eval '[[ $out == *"worktree remove"*wt-fusionnee* ]]'
+check "dev prévient que Unity recréera Library" eval '[[ $out == *"Unity le recréera"* ]]'
+out=$($BIN dev --yes)
+check "dev : worktree fusionné supprimé" eval '[[ ! -e $W/wt-fusionnee ]]'
+check "dev : worktree inactif depuis 14 j supprimé" eval '[[ ! -e $W/wt-vieille ]]'
+check "dev : les branches restent" eval 'git -C $W/repo show-ref -q --verify refs/heads/fusionnee && git -C $W/repo show-ref -q --verify refs/heads/vieille'
+check "dev : worktree pas propre gardé" eval '[[ -f $W/wt-sale/nouveau ]]'
+check "dev : worktree récent non fusionné gardé" eval '[[ -d $W/wt-active ]]'
+check "dev : worktree avec un processus gardé" eval '[[ -d $W/wt-occupee ]]'
+check "dev : worktree orphelin nettoyé (prune)" eval '! git -C $W/repo worktree list | grep -q wt-orpheline'
+check "dev : Library Unity inactif vidé, dossier gardé" eval 'empty_dir $W/vieux-unity/Library && [[ -f $W/vieux-unity/Assets/scene.unity ]]'
+check "dev : Library Unity actif gardé" eval '[[ -f $W/unity-actif/Library/ArtifactDB/blob ]]'
+check "dev écrit l'historique" eval 'grep -q "	md	" $HIST'
+teardown
+
+setup
+out=$($BIN system --dry-run)
+check "system : swap, instantanés, APFS, purgeable" eval '[[ $out == *"Échange (swap)"* && $out == *"Instantanés locaux"* && $out == *"Conteneur APFS"* && $out == *purgeable* ]]'
+check "system : dit que le swap attend le redémarrage" eval '[[ $out == *redémarrage* ]]'
+check "system --dry-run n'exécute pas sudo" eval '[[ $out == *"[aperçu] sudo tmutil thinlocalsnapshots / 999999999999 4"* && $out == *"[aperçu] sudo purge"* ]]'
+out=$(print n | $BIN system)
+check "system : refus = rien lancé" eval '[[ $out != *"[aperçu]"* && ! -e $HIST ]]'
 teardown
 
 setup; mkcaches
