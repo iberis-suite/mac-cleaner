@@ -23,8 +23,10 @@ mac-cleaner              # interactive menu
 mac-cleaner ram          # free inactive memory (sudo purge)
 mac-cleaner trash        # empty the Trash
 mac-cleaner uninstall    # remove an app and its leftovers in ~/Library
+mac-cleaner uninstall "/Applications/Name.app" --dry-run   # no search, no question: preview (or --yes) for this app
 mac-cleaner large        # find large files in your home folder
 mac-cleaner caches       # app caches, logs, Xcode, npm, Composer, Gradle, Homebrew, Docker, idle node_modules
+mac-cleaner caches --yes # no question: everything except Docker and node_modules (same safe set as auto)
 mac-cleaner downloads    # old files in ~/Downloads
 mac-cleaner startup      # login items, launch agents and daemons, and disable them
 mac-cleaner duplicates   # identical files (same content), keeps the oldest copy
@@ -71,6 +73,8 @@ Pour un Mac de développement plein :
 - `mac-cleaner temp` : fichiers de `/private/tmp` et `$TMPDIR` de plus de 3 jours qu'aucun processus n'a ouverts, et copies d'apps laissées par les mises à jour (`*.code_sign_clone`, par exemple Chrome) quand l'app ne tourne pas. L'espace réellement regagné est mesuré avec `df`, car les clones APFS partagent des blocs.
 - `mac-cleaner dev` : worktrees git propres, sans processus, fusionnés ou inactifs depuis 14 jours, supprimés avec `git worktree remove` (les branches restent), puis `git worktree prune`. À part, vider le `Library/` des projets Unity inactifs : Unity le recréera à la prochaine ouverture, ce qui prend du temps.
 - `mac-cleaner system` : swap, instantanés Time Machine, volumes APFS, purgeable, sans sudo. Le swap ne se libère vraiment qu'au redémarrage. Avec ton accord : `tmutil thinlocalsnapshots` et `purge` en sudo.
+- `mac-cleaner caches --dry-run` ou `--yes` : plus de choix au clavier, tout sauf Docker et `node_modules` (la sélection de `auto`).
+- `mac-cleaner uninstall "/Applications/Nom.app" --dry-run` (ou `--yes`) : traite directement cette app, sans recherche ni question ; les apps Apple restent refusées.
 - `auto` inclut `temp`, jamais `dev` ni `Library/` Unity. `--dry-run` montre ce qui serait fait sans rien supprimer. Installation : `brew install chaibialaa/tap/mac-cleaner`, puis `mac-cleaner`.
 
 ## Tests

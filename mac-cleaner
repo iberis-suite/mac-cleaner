@@ -1,15 +1,15 @@
 #!/bin/zsh
 setopt null_glob extended_glob
 
-VERSION=1.2.0
+VERSION=1.3.0
 SCRIPT=${0:t}
 
-DRY_RUN= YES= CMD=
+DRY_RUN= YES= CMD= ARG=
 for a in "$@"; do
   case $a in
     -n|--dry-run) DRY_RUN=1 ;;
     -y|--yes) YES=1 ;;
-    *) [[ -z $CMD ]] && CMD=$a ;;
+    *) if [[ -z $CMD ]]; then CMD=$a; elif [[ -z $ARG ]]; then ARG=$a; fi ;;
   esac
 done
 
@@ -60,6 +60,8 @@ if [[ $LANG_UI == fr ]]; then
     lg_ask "Mettre %s fichier(s) (%s) à la corbeille ?" lg_done "%s envoyés à la corbeille"
     ca_title "Caches et fichiers temporaires" ca_spin "Analyse des caches…"
     ca_pick "Numéros à nettoyer (ex. 1 3), « t » = tout, vide = rien"
+    ca_auto "Sans choix au clavier (--dry-run / --yes) : tout sauf Docker et node_modules." ca_out "exclu"
+    un_bad "App introuvable : %s"
     ca_done "Environ %s libérés" ca_note "(les apps ouvertes recréent une partie de leurs caches)"
     c_apps "Caches des apps" c_logs "Journaux (logs)" c_xcode "Xcode DerivedData" c_devsupport "Xcode iOS DeviceSupport"
     c_sim "Caches simulateurs iOS" c_npm "Cache npm" c_composer "Cache Composer" c_gradle "Caches Gradle"
@@ -81,7 +83,7 @@ if [[ $LANG_UI == fr ]]; then
     du_done "%s de doublons envoyés à la corbeille"
     hi_empty "Rien encore." hi_total "Libéré au total : %s"
     usage "Usage : %s [commande] [--dry-run] [--yes]"
-    u_ram "libérer la mémoire inactive" u_trash "vider la corbeille" u_un "désinstaller une app et ses fichiers"
+    u_ram "libérer la mémoire inactive" u_trash "vider la corbeille" u_un "désinstaller une app et ses fichiers (ou : uninstall \"/Applications/Nom.app\")"
     u_lg "chercher les gros fichiers" u_ca "nettoyer les caches (apps, dev, Homebrew, Docker, node_modules)"
     u_dl "vieux fichiers de Téléchargements" u_st "apps et services lancés au démarrage" u_du "fichiers en double"
     u_auto "tout ce qui est sans risque en un passage" u_hist "ce qui a été libéré, et quand"
@@ -146,6 +148,8 @@ else
     lg_ask "Move %s file(s) (%s) to the Trash?" lg_done "%s moved to the Trash"
     ca_title "Caches and temporary files" ca_spin "Analyzing caches…"
     ca_pick "Numbers to clean (e.g. 1 3), \"a\" = all, empty = none"
+    ca_auto "No keyboard choice (--dry-run / --yes): everything except Docker and node_modules." ca_out "excluded"
+    un_bad "App not found: %s"
     ca_done "About %s freed" ca_note "(running apps will rebuild part of their caches)"
     c_apps "App caches" c_logs "Logs" c_xcode "Xcode DerivedData" c_devsupport "Xcode iOS DeviceSupport"
     c_sim "iOS Simulator caches" c_npm "npm cache" c_composer "Composer cache" c_gradle "Gradle caches"
@@ -167,7 +171,7 @@ else
     du_done "%s of duplicates moved to the Trash"
     hi_empty "Nothing yet." hi_total "Freed in total: %s"
     usage "Usage: %s [command] [--dry-run] [--yes]"
-    u_ram "free inactive memory" u_trash "empty the Trash" u_un "uninstall an app and its files"
+    u_ram "free inactive memory" u_trash "empty the Trash" u_un "uninstall an app and its files (or: uninstall \"/Applications/Name.app\")"
     u_lg "find large files" u_ca "clean caches (apps, dev, Homebrew, Docker, node_modules)"
     u_dl "old files in Downloads" u_st "apps and services launched at startup" u_du "duplicate files"
     u_auto "everything safe in one pass" u_hist "what was freed, and when"
@@ -446,20 +450,27 @@ leftovers() {
 
 do_uninstall() {
   title "$T[m3]"
-  local filter
-  ask filter "$T[un_filter]"
-  local -a apps
-  apps=( /Applications/*.app ~/Applications/*.app )
-  [[ -n $filter ]] && apps=( ${(M)apps:#(#i)*${filter}*} )
-  (( ${#apps} )) || { warn "$T[un_none]"; return 0 }
-  print
-  local i=1 a
-  for a in $apps; do printf "  ${M}%3d${N}  %s\n" $i "${a:t:r}"; (( i++ )); done
-  print
-  local n
-  ask n "$T[un_pick]"
-  [[ $n == <1-> && $n -le ${#apps} ]] || return 0
-  local app=$apps[$n] name=${apps[$n]:t:r}
+  local app i=1
+  if [[ -n $ARG ]]; then
+    app=${${ARG/#\~/$HOME}%/}
+    [[ $app == *.app && -d $app ]] || { err "$(t un_bad "$ARG")"; return 1 }
+  else
+    local filter
+    ask filter "$T[un_filter]"
+    local -a apps
+    apps=( /Applications/*.app ~/Applications/*.app )
+    [[ -n $filter ]] && apps=( ${(M)apps:#(#i)*${filter}*} )
+    (( ${#apps} )) || { warn "$T[un_none]"; return 0 }
+    print
+    local a
+    for a in $apps; do printf "  ${M}%3d${N}  %s\n" $i "${a:t:r}"; (( i++ )); done
+    print
+    local n
+    ask n "$T[un_pick]"
+    [[ $n == <1-> && $n -le ${#apps} ]] || return 0
+    app=$apps[$n]
+  fi
+  local name=${app:t:r}
   local bid=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist" 2>/dev/null)
   [[ $bid == com.apple.* ]] && { err "$T[un_apple]"; return 0 }
 
@@ -661,15 +672,24 @@ do_caches() {
   local r i total=0 max=0
   for r in $rows; do keys+=( ${r%%$'\t'*} ); sizes+=( ${r#*$'\t'} ); done
   (( ${#keys} )) || { rm -f $NM_LIST; return 0 }
-  for i in {1..${#keys}}; do (( total += sizes[i], sizes[i] > max ? (max = sizes[i]) : 0 )); done
+  local auto= out
+  [[ -n $DRY_RUN || -n $YES ]] && auto=1
+  local -a chosen
   for i in {1..${#keys}}; do
-    printf "  ${M}%3d${N} %s %9s  %s\n" $i "$(bar ${sizes[i]} $max 16)" "$(human ${sizes[i]})" "$(cache_label ${keys[i]})"
+    (( sizes[i] > max ? (max = sizes[i]) : 0 ))
+    if [[ -z $auto ]] || (( ${SAFE_KEYS[(Ie)${keys[i]}]} )); then chosen+=( $i ); (( total += sizes[i] )); fi
+  done
+  for i in {1..${#keys}}; do
+    out=
+    [[ -n $auto ]] && (( ! ${chosen[(Ie)$i]} )) && out="  ${D}($T[ca_out])${N}"
+    printf "  ${M}%3d${N} %s %9s  %s%s\n" $i "$(bar ${sizes[i]} $max 16)" "$(human ${sizes[i]})" "$(cache_label ${keys[i]})" "$out"
   done
   print
   skip_note ca_skip $CA_KEEP
+  [[ -n $auto ]] && print "  ${D}$T[ca_auto]${N}"
   print "\n  ${B}$(t total "$(human $total)")${N}\n"
   local sel freed=0
-  ask sel "$T[ca_pick]"
+  if [[ -n $auto ]]; then sel=$chosen; else ask sel "$T[ca_pick]"; fi
   for i in $(pick_idx "$sel" ${#keys}); do
     cache_clean ${keys[i]}
     (( freed += sizes[i] ))
@@ -680,7 +700,7 @@ do_caches() {
   print
   log_hist m5 $freed
   celebrate "$(t ca_done "$(human $freed)")"
-  [[ -z $DRY_RUN ]] && print "  ${D}$T[ca_note]${N}"
+  [[ -n $DRY_RUN ]] || print "  ${D}$T[ca_note]${N}"
 }
 
 sel_idx() {

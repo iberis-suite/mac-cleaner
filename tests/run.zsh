@@ -137,6 +137,32 @@ check "désinstallation : fichiers liés à la corbeille" eval '[[ -f $MAC_CLEAN
 check "désinstallation : app voisine épargnée" eval '[[ -f $HOME/Library/Preferences/com.test.zzmcother.plist ]]'
 teardown
 
+setup; mkcaches; mkproject ancien old
+out=$($BIN caches --dry-run </dev/null)
+check "caches --dry-run sans clavier : pas de question" eval '[[ $out != *"Numéros à nettoyer"* && $out == *"tout sauf Docker et node_modules"* ]]'
+check "aperçus utilisés par l'app : code 0" eval '$BIN caches --dry-run </dev/null >/dev/null && $BIN temp --dry-run </dev/null >/dev/null && $BIN trash --dry-run </dev/null >/dev/null && $BIN auto --dry-run </dev/null >/dev/null'
+check "caches --dry-run sans clavier : rien supprimé" eval '[[ -f $HOME/Library/Caches/com.test.app/blob && -d $HOME/code/ancien/node_modules ]]'
+out=$($BIN caches --yes </dev/null)
+check "caches --yes sans clavier : caches vidés" eval 'empty_dir $HOME/Library/Caches && empty_dir $HOME/.npm/_cacache'
+check "caches --yes sans clavier : node_modules exclu" eval '[[ -d $HOME/code/ancien/node_modules && $out == *"node_modules"*"(exclu)"* ]]'
+check "caches --yes écrit l'historique" eval 'grep -q "	m5	" $HIST'
+teardown
+
+setup
+mkapp ZzArgApp com.test.zzarg
+mkdir -p "$HOME/Library/Application Support/ZzArgApp"
+out=$($BIN uninstall "$HOME/Applications/ZzArgApp.app" --dry-run </dev/null)
+check "uninstall <app> --dry-run : aperçu sans question" eval '[[ $out == *"Total"* && $out == *"ZzArgApp"* && $out != *"Nom (ou partie"* ]]'
+check "uninstall <app> --dry-run : rien déplacé" eval '[[ -d $HOME/Applications/ZzArgApp.app && ! -e $HIST ]]'
+$BIN uninstall "$HOME/Applications/ZzArgApp.app" --yes </dev/null >/dev/null
+check "uninstall <app> --yes : app et fichiers à la corbeille" eval '[[ -d $MAC_CLEANER_TRASH_DIR/ZzArgApp.app && -d "$MAC_CLEANER_TRASH_DIR/ZzArgApp" && ! -e $HOME/Applications/ZzArgApp.app ]]'
+check "uninstall <app> --yes écrit l'historique" eval 'grep -q "	m3	.*ZzArgApp" $HIST'
+mkapp ZzApple com.apple.zztest
+out=$($BIN uninstall "$HOME/Applications/ZzApple.app" --yes </dev/null)
+check "uninstall <app> : app Apple refusée" eval '[[ -d $HOME/Applications/ZzApple.app && $out == *"App système Apple"* ]]'
+check "uninstall <app> introuvable -> code 1" eval '! $BIN uninstall "$HOME/Applications/Absente.app" --yes </dev/null >/dev/null'
+teardown
+
 setup
 mkfile -n 3m $HOME/gros.bin; mkfile -n 1m $HOME/petit.bin
 printf '2\n1\no\n' | $BIN large >/dev/null
