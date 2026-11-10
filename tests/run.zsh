@@ -272,6 +272,95 @@ out=$(MAC_CLEANER_LANG=en $BIN history)
 check "historique : en anglais" eval '[[ $out == *"Freed in total"* && $out == *"Clean caches"* ]]'
 teardown
 
+tsv_ok() { local l; for l in ${(f)1}; do [[ $l == <1->$'\t'<->$'\t'*$'\t'*$'\t'* ]] || return 1; done }
+
+setup
+mkfile -n 3m $HOME/gros.bin; mkfile -n 2m $HOME/moyen.bin; mkfile -n 1m $HOME/petit.bin
+out=$($BIN large --list --min 1 </dev/null)
+check "large --list : TSV seul sur stdout" eval 'tsv_ok "$out" && [[ ${#${(f)out}} == 2 && $out != *"Gros fichiers"* ]]'
+check "large --list : trié, index 1 = le plus gros" eval '[[ ${${(f)out}[1]} == 1$'"'"'\t'"'"'3072$'"'"'\t'"'"'gros.bin$'"'"'\t'"'"'$HOME/gros.bin$'"'"'\t'"'"'file ]]'
+check "large --list : aucune action, code 0" eval '$BIN large --list --min 1 </dev/null >/dev/null && [[ -e $HOME/gros.bin && ! -e $HIST ]]'
+out=$($BIN large --dry-run --min 1 --select 2 </dev/null)
+check "large --dry-run --select : aperçu de l'index 2 seul" eval '[[ $out == *"[aperçu]"*moyen.bin* && $out != *"[aperçu]"*gros.bin* && -e $HOME/moyen.bin ]]'
+$BIN large --yes --min 1 --select 2 </dev/null >/dev/null
+check "large --yes --select : seul l'index 2 part" eval '[[ -e $MAC_CLEANER_TRASH_DIR/moyen.bin && -e $HOME/gros.bin ]]'
+teardown
+
+setup
+mkdir -p $HOME/Downloads; print a > $HOME/Downloads/vieux.dmg; mkdir $HOME/Downloads/vieuxdossier; print b > $HOME/Downloads/recent.txt
+old $HOME/Downloads/vieux.dmg $HOME/Downloads/vieuxdossier
+out=$($BIN downloads --list --days 30 </dev/null)
+check "downloads --list : vieux éléments seulement, sans question" eval 'tsv_ok "$out" && [[ ${#${(f)out}} == 2 && $out == *vieux.dmg* && $out == *vieuxdossier*dir* && $out != *recent* ]]'
+i=${${(M)${(f)out}:#*vieux.dmg*}%%$'\t'*}
+$BIN downloads --yes --days 30 --select $i </dev/null >/dev/null
+check "downloads --yes --select : l'élément choisi part" eval '[[ -e $MAC_CLEANER_TRASH_DIR/vieux.dmg && -d $HOME/Downloads/vieuxdossier ]]'
+teardown
+
+setup
+mkdir -p $HOME/docs/sub
+head -c 2200000 /dev/urandom > $HOME/docs/a.bin; old $HOME/docs/a.bin
+cp $HOME/docs/a.bin $HOME/docs/sub/b.bin; touch $HOME/docs/sub/b.bin
+out=$($BIN duplicates --list --dir $HOME/docs --min 1 </dev/null)
+check "duplicates --list : groupe, original gardé puis copie" eval 'tsv_ok "$out" && [[ ${${(f)out}[1]} == 1$'"'"'\t'"'"'*a.bin$'"'"'\t'"'"'keep && ${${(f)out}[2]} == 1$'"'"'\t'"'"'*b.bin$'"'"'\t'"'"'copy ]]'
+$BIN duplicates --yes --dir $HOME/docs --min 1 --select all </dev/null >/dev/null
+check "duplicates --yes --select all : la copie part, l'original reste" eval '[[ -e $MAC_CLEANER_TRASH_DIR/b.bin && -e $HOME/docs/a.bin ]]'
+teardown
+
+setup
+mkdir -p $HOME/Library/LaunchAgents
+/usr/libexec/PlistBuddy -c 'Add :Label string com.test.zza' $HOME/Library/LaunchAgents/com.test.zza.plist >/dev/null
+/usr/libexec/PlistBuddy -c 'Add :Label string com.test.zzb' $HOME/Library/LaunchAgents/com.test.zzb.plist >/dev/null
+out=$($BIN startup --list </dev/null)
+check "startup --list : agents du HOME de test" eval 'tsv_ok "$out" && [[ $out == *"com.test.zza	$HOME/Library/LaunchAgents/com.test.zza.plist	agent	off"* ]]'
+i=${${(M)${(f)out}:#*com.test.zzb*}%%$'\t'*}
+out=$($BIN startup --dry-run --select $i </dev/null)
+check "startup --dry-run --select : rien désactivé" eval '[[ $out == *"[aperçu]"*com.test.zzb* && -e $HOME/Library/LaunchAgents/com.test.zzb.plist ]]'
+$BIN startup --yes --select $i </dev/null >/dev/null
+check "startup --yes --select : seul l'agent choisi désactivé" eval '[[ -e $MAC_CLEANER_TRASH_DIR/com.test.zzb.plist && -e $HOME/Library/LaunchAgents/com.test.zza.plist ]]'
+teardown
+
+setup; mkrepo; mkunity vieux-unity old
+W=$HOME/code
+out=$($BIN dev --list </dev/null)
+check "dev --list : worktrees et Unity, sans question" eval 'tsv_ok "$out" && [[ $out == *wt-fusionnee*worktree* && $out == *wt-vieille*worktree* && $out == *vieux-unity/Library$'"'"'\t'"'"'unity* && $out != *wt-sale* ]]'
+i=${${(M)${(f)out}:#*wt-fusionnee*}%%$'\t'*}
+out=$($BIN dev --dry-run --select $i </dev/null)
+check "dev --dry-run --select : un worktree, pas de Library" eval '[[ $out == *"worktree remove"*wt-fusionnee* && $out != *"worktree remove"*wt-vieille* && $out != *"rm -rf"*vieux-unity* ]]'
+$BIN dev --yes --select $i </dev/null >/dev/null
+check "dev --yes --select : seul le worktree choisi supprimé" eval '[[ ! -e $W/wt-fusionnee && -d $W/wt-vieille && -f $W/vieux-unity/Library/ArtifactDB/blob ]]'
+$BIN dev --yes --select "" --select-unity 1 </dev/null >/dev/null
+check "dev --yes --select-unity : Library vidé sur demande explicite" eval '[[ ! -e $W/vieux-unity/Library/ArtifactDB && -d $W/vieux-unity/Library && -d $W/wt-vieille ]]'
+teardown
+
+setup; mkcaches; mkproject ancien old
+out=$($BIN caches --list </dev/null)
+check "caches --list : clé, taille, chemin" eval 'tsv_ok "$out" && [[ $out == *"$HOME/Library/Caches	apps"* && $out == *"	npm"* && $out == *"	nodemod"* ]]'
+i=${${(M)${(f)out}:#*$'\t'npm}%%$'\t'*}
+$BIN caches --yes --select $i </dev/null >/dev/null
+check "caches --yes --select : seul npm vidé" eval 'empty_dir $HOME/.npm/_cacache && [[ -f $HOME/Library/Caches/com.test.app/blob && -f $HOME/Library/Logs/test.log ]]'
+i=${${(M)${(f)out}:#*$'\t'nodemod}%%$'\t'*}
+$BIN caches --yes --select $i </dev/null >/dev/null
+check "caches --yes --select : node_modules sur demande" eval '[[ ! -e $HOME/code/ancien/node_modules ]]'
+check "--list refusé hors des commandes à liste" eval '! $BIN ram --list </dev/null >/dev/null 2>&1'
+teardown
+
+setup
+FAKE=$SANDBOX/bin; mkdir -p $FAKE
+print -r -- '#!/bin/zsh
+print -r -- "$*" >> '$SANDBOX'/sudo.log' > $FAKE/sudo
+print -r -- '#!/bin/zsh
+exit 1' > $FAKE/askpass
+chmod +x $FAKE/sudo $FAKE/askpass
+PATH=$FAKE:$PATH SUDO_ASKPASS=$FAKE/askpass $BIN system --yes </dev/null >/dev/null 2>&1
+check "SUDO_ASKPASS : sudo -A partout" eval '[[ -s $SANDBOX/sudo.log ]] && ! grep -qv "^-A " $SANDBOX/sudo.log && grep -q "^-A tmutil" $SANDBOX/sudo.log && grep -q "^-A purge" $SANDBOX/sudo.log'
+rm -f $SANDBOX/sudo.log
+PATH=$FAKE:$PATH SUDO_ASKPASS=$FAKE/askpass $BIN ram --yes </dev/null >/dev/null 2>&1
+check "SUDO_ASKPASS : ram utilise sudo -A" eval 'grep -q "^-A purge" $SANDBOX/sudo.log'
+rm -f $SANDBOX/sudo.log
+PATH=$FAKE:$PATH $BIN ram --yes </dev/null >/dev/null 2>&1
+check "sans SUDO_ASKPASS : sudo inchangé" eval '[[ -s $SANDBOX/sudo.log ]] && ! grep -q -- "-A" $SANDBOX/sudo.log'
+teardown
+
 if (( $+commands[python3] )); then
   setup; mkcaches
   out=$(python3 -I $PTY $BIN -- 5 't\r' x q)

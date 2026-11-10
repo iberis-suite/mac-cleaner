@@ -1,19 +1,42 @@
 #!/bin/zsh
 setopt null_glob extended_glob
 
-VERSION=1.3.0
+VERSION=1.3.1
 SCRIPT=${0:t}
 
-DRY_RUN= YES= CMD= ARG=
-for a in "$@"; do
+DRY_RUN= YES= CMD= ARG= LIST= SELECT= SELECT_SET= SELECT_U= SELECT_U_SET= OPT_MIN= OPT_DAYS= OPT_DIR=
+typeset -a ARGV_=( "$@" )
+typeset -i ai=1
+while (( ai <= ${#ARGV_} )); do
+  a=$ARGV_[ai]
   case $a in
     -n|--dry-run) DRY_RUN=1 ;;
     -y|--yes) YES=1 ;;
+    --list) LIST=1 ;;
+    --select=*) SELECT=${a#*=} SELECT_SET=1 ;;
+    --select) SELECT=$ARGV_[ai+1] SELECT_SET=1; (( ai++ )) ;;
+    --select-unity=*) SELECT_U=${a#*=} SELECT_U_SET=1 ;;
+    --select-unity) SELECT_U=$ARGV_[ai+1] SELECT_U_SET=1; (( ai++ )) ;;
+    --min=*) OPT_MIN=${a#*=} ;;
+    --min) OPT_MIN=$ARGV_[ai+1]; (( ai++ )) ;;
+    --days=*) OPT_DAYS=${a#*=} ;;
+    --days) OPT_DAYS=$ARGV_[ai+1]; (( ai++ )) ;;
+    --dir=*) OPT_DIR=${a#*=} ;;
+    --dir) OPT_DIR=$ARGV_[ai+1]; (( ai++ )) ;;
     *) if [[ -z $CMD ]]; then CMD=$a; elif [[ -z $ARG ]]; then ARG=$a; fi ;;
   esac
+  (( ai++ ))
 done
+unset a ai ARGV_
 
-if [[ -t 1 && -z $NO_COLOR ]]; then
+typeset -a SUDO=( sudo )
+[[ -n $SUDO_ASKPASS ]] && SUDO=( sudo -A )
+
+if [[ -n $LIST ]]; then
+  exec 3>&1 1>/dev/null
+fi
+
+if [[ -t 1 && -z $NO_COLOR && -z $LIST ]]; then
   FANCY=1
   B=$'\e[1m' D=$'\e[2m' G=$'\e[38;5;114m' Y=$'\e[38;5;221m' R=$'\e[38;5;203m' C=$'\e[38;5;81m' M=$'\e[38;5;177m' N=$'\e[0m'
 else
@@ -119,6 +142,9 @@ if [[ $LANG_UI == fr ]]; then
     sy_done "Espace libre : %s → %s"
     u_dry "--dry-run, -n   aperçu : montre ce qui serait fait, sans rien supprimer"
     u_yes "--yes, -y       ne demande pas de confirmation"
+    u_list "--list          sans rien faire : une ligne TSV par élément (index, Ko, libellé, chemin, type)"
+    u_sel "--select \"1 3\"  répond au choix avec ces index (ou all) ; dev : --select-unity pour Library/"
+    u_opt "--min <Mo>, --days <n>, --dir <chemin>   paramètres de large, downloads, duplicates"
   )
 else
   T=(
@@ -207,6 +233,9 @@ else
     sy_done "Free space: %s → %s"
     u_dry "--dry-run, -n   preview what would be done, delete nothing"
     u_yes "--yes, -y       do not ask for confirmation"
+    u_list "--list          do nothing: one TSV line per item (index, KB, label, path, type)"
+    u_sel "--select \"1 3\"  answer the choice with these indexes (or all); dev: --select-unity for Library/"
+    u_opt "--min <MB>, --days <n>, --dir <path>   parameters of large, downloads, duplicates"
   )
 fi
 
@@ -309,6 +338,20 @@ confirm() {
 
 ask() { local __v; read "__v?  ${M}?${N} $2 ${M}›${N} "; : ${(P)1::=$__v} }
 
+emit() { print -r -u3 -- "$1	$2	$3	$4	$5${6:+	$6}" }
+
+choose() {
+  if [[ -n $SELECT_SET ]]; then : ${(P)1::=$SELECT}; return 0; fi
+  ask "$1" "$2"
+}
+
+param() {
+  local __o=$2
+  if [[ -n $__o ]]; then : ${(P)1::=$__o}; return 0; fi
+  if [[ -n $LIST || -n $SELECT_SET ]]; then : ${(P)1::=}; return 0; fi
+  ask "$1" "$3"
+}
+
 key() {
   local __k
   if [[ -t 0 ]]; then read -s -k1 "__k?$2"; else read -k1 -u0 "__k?$2"; fi || return 1
@@ -320,7 +363,7 @@ pause() { local r; key r "  ${D}$T[back]${N}"; print }
 pick_idx() {
   local sel=$1 n=$2 i
   (( n > 0 )) || return 0
-  if [[ $sel == ${~T[all_key]} ]]; then seq 1 $n; return; fi
+  if [[ $sel == all || $sel == ${~T[all_key]} ]]; then seq 1 $n; return; fi
   for i in ${(u)=sel}; do [[ $i == <1-> && $i -le $n ]] && print $i; done
 }
 
@@ -370,7 +413,7 @@ to_trash() {
       mv "$p" "$dest" 2>/dev/null || err "$(t mv_fail "$p")"
     else
       trash "$p" 2>/dev/null || osascript -e "tell application \"Finder\" to delete POSIX file \"$p\"" >/dev/null 2>&1 \
-        || sudo mv "$p" "$TRASH_DIR/" 2>/dev/null || err "$(t mv_fail "$p")"
+        || $SUDO mv "$p" "$TRASH_DIR/" 2>/dev/null || err "$(t mv_fail "$p")"
     fi
   done
 }
@@ -407,8 +450,8 @@ do_ram() {
   print
   confirm "$T[ram_ask]" || return 0
   if [[ -n $DRY_RUN ]]; then dry "sudo purge"; celebrate; return 0; fi
-  sudo -p "  ${D}$T[sudo_prompt]${N} " true || return 0
-  spin "$T[ram_spin]" sudo purge
+  $SUDO -p "  ${D}$T[sudo_prompt]${N} " true || return 0
+  spin "$T[ram_spin]" $SUDO purge
   local after=$(mem_free)
   log_hist m1 0 "$before% → $after%"
   celebrate "$(t ram_done $before $after)"
@@ -501,13 +544,17 @@ large_scan() {
 do_large() {
   title "$T[m4]"
   local min
-  ask min "$T[lg_min] ${D}[500]${N}"
+  param min "$OPT_MIN" "$T[lg_min] ${D}[500]${N}"
   [[ $min == <1-> ]] || min=500
   local -a rows=( ${(f)"$(spin "$T[lg_spin]" large_scan $min)"} )
   rows=( ${rows:#} )
   (( ${#rows} )) || { warn "$(t lg_none $min)"; return 0 }
   local -a paths psz
   local i=1 r max=${rows[1]%%$'\t'*} sz
+  if [[ -n $LIST ]]; then
+    for r in $rows; do emit $i $(( ${r%%$'\t'*} / 1024 )) "${${r#*$'\t'}:t}" "${r#*$'\t'}" file; (( i++ )); done
+    return 0
+  fi
   for r in $rows; do
     paths+=( "${r#*$'\t'}" ); sz=${r%%$'\t'*}; psz+=( $(( sz / 1024 )) )
     printf "  ${M}%3d${N} %s %9s  %s\n" $i "$(bar $(( sz / 1024 )) $(( max / 1024 )) 12)" "$(human $(( sz / 1024 )))" "${${r#*$'\t'}/#$HOME/~}"
@@ -515,7 +562,7 @@ do_large() {
   done
   print
   local sel
-  ask sel "$T[pick]"
+  choose sel "$T[pick]"
   local -a pick
   local k=0
   for i in $(pick_idx "$sel" ${#paths}); do pick+=( "${paths[i]}" ); (( k += psz[i] )); done
@@ -672,24 +719,31 @@ do_caches() {
   local r i total=0 max=0
   for r in $rows; do keys+=( ${r%%$'\t'*} ); sizes+=( ${r#*$'\t'} ); done
   (( ${#keys} )) || { rm -f $NM_LIST; return 0 }
+  if [[ -n $LIST ]]; then
+    for i in {1..${#keys}}; do emit $i ${sizes[i]} "$(cache_label ${keys[i]})" "${CDIR[${keys[i]}]}" ${keys[i]}; done
+    rm -f $NM_LIST
+    return 0
+  fi
   local auto= out
   [[ -n $DRY_RUN || -n $YES ]] && auto=1
-  local -a chosen
+  local -a chosen picked
+  [[ -n $SELECT_SET ]] && picked=( $(pick_idx "$SELECT" ${#keys}) )
   for i in {1..${#keys}}; do
     (( sizes[i] > max ? (max = sizes[i]) : 0 ))
-    if [[ -z $auto ]] || (( ${SAFE_KEYS[(Ie)${keys[i]}]} )); then chosen+=( $i ); (( total += sizes[i] )); fi
+    if [[ -n $SELECT_SET ]]; then (( ${picked[(Ie)$i]} )) && { chosen+=( $i ); (( total += sizes[i] )) }
+    elif [[ -z $auto ]] || (( ${SAFE_KEYS[(Ie)${keys[i]}]} )); then chosen+=( $i ); (( total += sizes[i] )); fi
   done
   for i in {1..${#keys}}; do
     out=
-    [[ -n $auto ]] && (( ! ${chosen[(Ie)$i]} )) && out="  ${D}($T[ca_out])${N}"
+    [[ -n $auto || -n $SELECT_SET ]] && (( ! ${chosen[(Ie)$i]} )) && out="  ${D}($T[ca_out])${N}"
     printf "  ${M}%3d${N} %s %9s  %s%s\n" $i "$(bar ${sizes[i]} $max 16)" "$(human ${sizes[i]})" "$(cache_label ${keys[i]})" "$out"
   done
   print
   skip_note ca_skip $CA_KEEP
-  [[ -n $auto ]] && print "  ${D}$T[ca_auto]${N}"
+  [[ -n $auto && -z $SELECT_SET ]] && print "  ${D}$T[ca_auto]${N}"
   print "\n  ${B}$(t total "$(human $total)")${N}\n"
   local sel freed=0
-  if [[ -n $auto ]]; then sel=$chosen; else ask sel "$T[ca_pick]"; fi
+  if [[ -n $auto || -n $SELECT_SET ]]; then sel=$chosen; else ask sel "$T[ca_pick]"; fi
   for i in $(pick_idx "$sel" ${#keys}); do
     cache_clean ${keys[i]}
     (( freed += sizes[i] ))
@@ -704,6 +758,7 @@ do_caches() {
 }
 
 sel_idx() {
+  if [[ -n $3 ]]; then pick_idx "$4" $1; return 0; fi
   if [[ -n $DRY_RUN || -n $YES ]]; then (( $1 )) && seq 1 $1; return 0; fi
   local sel
   ask sel "$2"
@@ -942,6 +997,11 @@ do_dev() {
       prune) prn+=( $f[2] ); prr+=( "$f[3]" ) ;;
     esac
   done
+  if [[ -n $LIST ]]; then
+    (( ${#wp} )) && for i in {1..${#wp}}; do emit $i $wk[i] "${wr[i]:t} · ${${wb[i]:#-}:-$T[dv_detached]} · $(dv_reason $wn[i])" "$wp[i]" worktree; done
+    (( ${#up} )) && for i in {1..${#up}}; do emit $i $uk[i] "${up[i]:t}" "$up[i]/Library" unity; done
+    return 0
+  fi
   print "  ${B}$T[dv_wt]${N}\n"
   if (( ${#wp} )); then
     for i in {1..${#wp}}; do (( wk[i] > max )) && max=$wk[i]; done
@@ -957,7 +1017,7 @@ do_dev() {
   fi
   print
   if (( ${#wp} )); then
-    for i in $(sel_idx ${#wp} "$T[dv_wt_pick]"); do pick+=( $i ); done
+    for i in $(sel_idx ${#wp} "$T[dv_wt_pick]" "$SELECT_SET" "$SELECT"); do pick+=( $i ); done
     if (( ${#pick} )) && confirm "$(t dv_wt_ask ${#pick})"; then
       for i in $pick; do
         touched[$wr[i]]=1
@@ -979,7 +1039,11 @@ do_dev() {
     done
     print
     pick=()
-    if [[ -n $YES && -z $DRY_RUN ]]; then warn "$T[dv_un_yes]"; else
+    if [[ -n $SELECT_U_SET ]]; then
+      for i in $(sel_idx ${#up} "$T[dv_un_pick]" 1 "$SELECT_U"); do pick+=( $i ); done
+    elif [[ -n $YES && -z $DRY_RUN ]]; then warn "$T[dv_un_yes]"
+    elif [[ -n $SELECT_SET ]]; then :
+    else
       for i in $(sel_idx ${#up} "$T[dv_un_pick]"); do pick+=( $i ); done
     fi
     if (( ${#pick} )) && confirm "$(t dv_un_ask ${#pick})"; then
@@ -1037,9 +1101,9 @@ do_system() {
   print "  ${D}$T[sy_note]${N}\n"
   confirm "$T[sy_ask]" || return 0
   if [[ -n $DRY_RUN ]]; then dry "sudo tmutil thinlocalsnapshots / 999999999999 4"; dry "sudo purge"; celebrate; return 0; fi
-  sudo -p "  ${D}$T[sudo_prompt]${N} " true || return 0
-  spin "$T[sy_spin]" sudo tmutil thinlocalsnapshots / 999999999999 4 >/dev/null
-  spin "$T[ram_spin]" sudo purge
+  $SUDO -p "  ${D}$T[sudo_prompt]${N} " true || return 0
+  spin "$T[sy_spin]" $SUDO tmutil thinlocalsnapshots / 999999999999 4 >/dev/null
+  spin "$T[ram_spin]" $SUDO purge
   local after=$(free_kb)
   log_hist ms $(( after > fr ? after - fr : 0 ))
   celebrate "$(t sy_done "$(human $fr)" "$(human $after)")"
@@ -1085,13 +1149,21 @@ dl_scan() {
 do_downloads() {
   title "$T[m6]"
   local days
-  ask days "$T[dl_days] ${D}[90]${N}"
+  param days "$OPT_DAYS" "$T[dl_days] ${D}[90]${N}"
   [[ $days == <1-> ]] || days=90
   local -a rows=( ${(f)"$(spin "$T[dl_spin]" dl_scan $days)"} )
   rows=( ${rows:#} )
   (( ${#rows} )) || { warn "$(t dl_none $days)"; return 0 }
   local -a paths psz
   local now=$(date +%s) i=1 r sz mt p max=${rows[1]%%$'\t'*}
+  if [[ -n $LIST ]]; then
+    for r in $rows; do
+      sz=${r%%$'\t'*}; p=${r#*$'\t'*$'\t'}
+      emit $i $sz "${p:t}" "$p" $([[ -d $p ]] && print dir || print file)
+      (( i++ ))
+    done
+    return 0
+  fi
   for r in $rows; do
     sz=${r%%$'\t'*}; mt=${${r#*$'\t'}%%$'\t'*}; p=${r#*$'\t'*$'\t'}
     paths+=( "$p" ); psz+=( $sz )
@@ -1100,7 +1172,7 @@ do_downloads() {
   done
   print
   local sel k=0
-  ask sel "$T[pick]"
+  choose sel "$T[pick]"
   local -a pick
   for i in $(pick_idx "$sel" ${#paths}); do pick+=( "${paths[i]}" ); (( k += psz[i] )); done
   (( ${#pick} )) || return 0
@@ -1135,8 +1207,8 @@ st_disable() {
   case $kind in
     login) act_q osascript -e "tell application \"System Events\" to delete login item \"$label\"" ;;
     agent) act_q launchctl bootout gui/$UID "$f"; to_trash "$f" ;;
-    sysagent) act_q sudo launchctl bootout gui/$UID "$f"; to_trash "$f" ;;
-    daemon) act_q sudo launchctl bootout system "$f"; to_trash "$f" ;;
+    sysagent) act_q $SUDO launchctl bootout gui/$UID "$f"; to_trash "$f" ;;
+    daemon) act_q $SUDO launchctl bootout system "$f"; to_trash "$f" ;;
   esac
 }
 
@@ -1147,6 +1219,14 @@ do_startup() {
   (( ${#rows} )) || { ok "$T[st_none]"; return 0 }
   local -a kinds labels files
   local i=1 r kind state label f dot
+  if [[ -n $LIST ]]; then
+    for r in $rows; do
+      kind=${r%%$'\t'*}; r=${r#*$'\t'}; state=${r%%$'\t'*}; r=${r#*$'\t'}; label=${r%%$'\t'*}; f=${r#*$'\t'}
+      emit $i 0 "$label" "$f" $kind $state
+      (( i++ ))
+    done
+    return 0
+  fi
   for r in $rows; do
     kind=${r%%$'\t'*}; r=${r#*$'\t'}; state=${r%%$'\t'*}; r=${r#*$'\t'}; label=${r%%$'\t'*}; f=${r#*$'\t'}
     kinds+=( $kind ); labels+=( "$label" ); files+=( "$f" )
@@ -1156,13 +1236,13 @@ do_startup() {
   done
   print "\n  ${D}$T[st_note]${N}\n"
   local sel
-  ask sel "$T[st_pick]"
+  choose sel "$T[st_pick]"
   local -a pick
   for i in $(pick_idx "$sel" ${#labels}); do pick+=( $i ); done
   (( ${#pick} )) || return 0
   confirm "$(t st_ask ${#pick})" || return 0
   if [[ -z $DRY_RUN ]] && (( ${kinds[(I)sysagent]} || ${kinds[(I)daemon]} )); then
-    for i in $pick; do [[ ${kinds[i]} == (sysagent|daemon) ]] && { sudo -p "  ${D}$T[sudo_prompt]${N} " -v || return 0; break }; done
+    for i in $pick; do [[ ${kinds[i]} == (sysagent|daemon) ]] && { $SUDO -p "  ${D}$T[sudo_prompt]${N} " -v || return 0; break }; done
   fi
   local done_labels=()
   for i in $pick; do st_disable ${kinds[i]} "${labels[i]}" "${files[i]}"; ok "${labels[i]}"; done_labels+=( "${labels[i]}" ); done
@@ -1184,10 +1264,10 @@ du_scan() {
 do_dupes() {
   title "$T[m8]"
   local dir min
-  ask dir "$T[du_dir]"
+  param dir "$OPT_DIR" "$T[du_dir]"
   dir=${dir/#\~/$HOME}; dir=${dir:-$HOME}
-  [[ -d $dir ]] || { err "$(t du_bad "$dir")"; return 0 }
-  ask min "$T[lg_min] ${D}[1]${N}"
+  [[ -d $dir ]] || { err "$(t du_bad "$dir")"; [[ -n $LIST ]] && return 1; return 0 }
+  param min "$OPT_MIN" "$T[lg_min] ${D}[1]${N}"
   [[ $min == <1-> ]] || min=1
   local -a rows=( ${(f)"$(spin "$T[du_spin]" du_scan "$dir" $min)"} )
   rows=( ${rows:#} )
@@ -1200,6 +1280,15 @@ do_dupes() {
   done
   gend+=( ${#rows} )
   local g j sz p
+  if [[ -n $LIST ]]; then
+    for g in {1..${#gstart}}; do
+      for j in {${gstart[g]}..${gend[g]}}; do
+        p=${rows[j]#*$'\t'*$'\t'*$'\t'}
+        emit $g $(( ${${rows[j]#*$'\t'}%%$'\t'*} / 1024 )) "${p:t}" "$p" $( (( j == gstart[g] )) && print keep || print copy )
+      done
+    done
+    return 0
+  fi
   for g in {1..${#gstart}}; do
     sz=${${rows[gstart[g]]#*$'\t'}%%$'\t'*}
     print "  ${M}$(t du_group $g $(( gend[g] - gstart[g] + 1 )) "$(human $(( sz / 1024 )))")${N}"
@@ -1211,7 +1300,7 @@ do_dupes() {
   done
   print
   local sel k=0
-  ask sel "$T[du_pick]"
+  choose sel "$T[du_pick]"
   local -a pick
   for g in $(pick_idx "$sel" ${#gstart}); do
     for j in {$(( gstart[g] + 1 ))..${gend[g]}}; do
@@ -1294,8 +1383,13 @@ usage() {
     downloads "$T[u_dl]" startup "$T[u_st]" duplicates "$T[u_du]" temp "$T[u_te]" dev "$T[u_dv]" system "$T[u_sy]" \
     auto "$T[u_auto]" history "$T[u_hist]"
   print "  $T[u_menu]\n"
-  print "  $T[u_dry]\n  $T[u_yes]"
+  print "  $T[u_dry]\n  $T[u_yes]\n  $T[u_list]\n  $T[u_sel]\n  $T[u_opt]"
 }
+
+if [[ -n $LIST && $CMD != (gros|large|caches|telechargements|downloads|demarrage|startup|doublons|duplicates|dev) ]]; then
+  print -u2 -- "--list: caches large downloads duplicates startup dev"
+  exit 2
+fi
 
 case $CMD in
   ram) do_ram ;;
