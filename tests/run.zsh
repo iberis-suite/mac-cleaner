@@ -272,19 +272,21 @@ out=$(MAC_CLEANER_LANG=en $BIN history)
 check "historique : en anglais" eval '[[ $out == *"Freed in total"* && $out == *"Clean caches"* ]]'
 teardown
 
-tsv_ok() { local l; for l in ${(f)1}; do [[ $l == <1->$'\t'<->$'\t'*$'\t'*$'\t'* || $l == 0$'\t'<->$'\t'*$'\t'*$'\t'(skipped|kept) ]] || return 1; done }
+tsv_ok() { local l; for l in ${(f)1}; do [[ $l == STEP$'\t'* ]] && continue; [[ $l == <1->$'\t'<->$'\t'*$'\t'*$'\t'* || $l == 0$'\t'<->$'\t'*$'\t'*$'\t'(skipped|kept) ]] || return 1; done }
 col() { local l; for l in ${(f)1}; do [[ $l == *"$2"* ]] && { print -r -- "${${(@ps:\t:)l}[$3]}"; return }; done }
 
 setup
 mkfile -n 3m $HOME/gros.bin; mkfile -n 2m $HOME/moyen.bin; mkfile -n 1m $HOME/petit.bin
 out=$($BIN large --list --min 1 </dev/null)
 check "large --list : TSV seul sur stdout" eval 'tsv_ok "$out" && [[ ${#${(f)out}} == 2 && $out != *"Gros fichiers"* ]]'
-check "large --list : trié, index 1 = le plus gros" eval '[[ ${${(f)out}[1]} == 1$'"'"'\t'"'"'3072$'"'"'\t'"'"'gros.bin$'"'"'\t'"'"'$HOME/gros.bin$'"'"'\t'"'"'file ]]'
+check "large --list : taille et chemin, tri laissé à l'app" eval '[[ $(col "$out" gros.bin 2) == 3072 && $(col "$out" gros.bin 4) == $HOME/gros.bin && $(col "$out" moyen.bin 2) == 2048 && $(col "$out" gros.bin 5) == file ]]'
+check "large --list : index uniques 1 et 2" eval '[[ ${(j: :)${(o)${(f)"$(print -rl -- ${${(f)out}%%$'"'"'\t'"'"'*})"}}} == "1 2" ]]'
 check "large --list : aucune action, code 0" eval '$BIN large --list --min 1 </dev/null >/dev/null && [[ -e $HOME/gros.bin && ! -e $HIST ]]'
-out=$($BIN large --dry-run --min 1 --select 2 </dev/null)
-check "large --dry-run --select : aperçu de l'index 2 seul" eval '[[ $out == *"[aperçu]"*moyen.bin* && $out != *"[aperçu]"*gros.bin* && -e $HOME/moyen.bin ]]'
-$BIN large --yes --min 1 --select 2 </dev/null >/dev/null
-check "large --yes --select : seul l'index 2 part" eval '[[ -e $MAC_CLEANER_TRASH_DIR/moyen.bin && -e $HOME/gros.bin ]]'
+i=$(col "$out" moyen.bin 1)
+out=$($BIN large --dry-run --min 1 --select $i </dev/null)
+check "large --dry-run --select : aperçu de l'index choisi seul" eval '[[ $out == *"[aperçu]"*moyen.bin* && $out != *"[aperçu]"*gros.bin* && -e $HOME/moyen.bin ]]'
+$BIN large --yes --min 1 --select $i </dev/null >/dev/null
+check "large --yes --select : seul l'index choisi part" eval '[[ -e $MAC_CLEANER_TRASH_DIR/moyen.bin && -e $HOME/gros.bin ]]'
 teardown
 
 setup
@@ -302,7 +304,7 @@ mkdir -p $HOME/docs/sub
 head -c 2200000 /dev/urandom > $HOME/docs/a.bin; old $HOME/docs/a.bin
 cp $HOME/docs/a.bin $HOME/docs/sub/b.bin; touch $HOME/docs/sub/b.bin
 out=$($BIN duplicates --list --dir $HOME/docs --min 1 </dev/null)
-check "duplicates --list : groupe, original gardé puis copie" eval 'tsv_ok "$out" && [[ ${${(f)out}[1]} == 1$'"'"'\t'"'"'*a.bin$'"'"'\t'"'"'keep && ${${(f)out}[2]} == 1$'"'"'\t'"'"'*b.bin$'"'"'\t'"'"'copy ]]'
+check "duplicates --list : groupe, original gardé puis copie" eval 'tsv_ok "$out" && [[ ${${${(f)out}:#STEP*}[1]} == 1$'"'"'\t'"'"'*a.bin$'"'"'\t'"'"'keep && ${${${(f)out}:#STEP*}[2]} == 1$'"'"'\t'"'"'*b.bin$'"'"'\t'"'"'copy ]]'
 $BIN duplicates --yes --dir $HOME/docs --min 1 --select all </dev/null >/dev/null
 check "duplicates --yes --select all : la copie part, l'original reste" eval '[[ -e $MAC_CLEANER_TRASH_DIR/b.bin && -e $HOME/docs/a.bin ]]'
 teardown
@@ -342,7 +344,7 @@ check "caches --yes --select : seul npm vidé" eval 'empty_dir $HOME/.npm/_cacac
 i=$(col "$out" "	nodemod	" 1)
 $BIN caches --yes --select $i </dev/null >/dev/null
 check "caches --yes --select : node_modules sur demande" eval '[[ ! -e $HOME/code/ancien/node_modules ]]'
-check "--list refusé hors des commandes à liste" eval '! $BIN ram --list </dev/null >/dev/null 2>&1 && ! $BIN system --list </dev/null >/dev/null 2>&1'
+check "--list refusé hors des commandes à liste" eval '! $BIN ram --list </dev/null >/dev/null 2>&1 && ! $BIN uninstall --list </dev/null >/dev/null 2>&1'
 teardown
 
 setup; mkcaches; runapp ZzRun com.test.zzrun
@@ -481,6 +483,42 @@ if (( $+commands[python3] )); then
   check "terminal : la question RAM accepte une réponse" eval '[[ $out == *"(o/N) › n"* && $out != *"invalid"* ]]'
   teardown
 fi
+
+setup
+mkdir -p $HOME/docs $SANDBOX/bin
+head -c 3200000 /dev/urandom > $HOME/docs/gros-a.bin; cp $HOME/docs/gros-a.bin $HOME/docs/gros-b.bin
+head -c 2200000 /dev/urandom > $HOME/docs/lent-a.bin; cp $HOME/docs/lent-a.bin $HOME/docs/lent-b.bin
+print -r -- '#!/bin/zsh
+[[ $2 == *lent* ]] && sleep 2
+exec /sbin/md5 "$@"' > $SANDBOX/bin/md5
+chmod +x $SANDBOX/bin/md5
+zmodload zsh/datetime
+t0=$EPOCHREALTIME
+out=$(PATH=$SANDBOX/bin:$PATH $BIN duplicates --list --dir $HOME/docs --min 1 </dev/null | while IFS= read -r l; do print -r -- "$(( EPOCHREALTIME - t0 ))	$l"; done)
+first=${${(M)${(f)out}:#*gros-a.bin*}%%$'\t'*}
+last=$(( EPOCHREALTIME - t0 ))
+check "--list émet ses lignes une à une (sans attendre la fin)" eval '(( first < last - 3 )) && [[ $out == *lent-b.bin* ]]'
+check "--list annonce les étapes (STEP)" eval '[[ $out == *"STEP	size"*"STEP	hash"* ]]'
+teardown
+
+setup
+out=$($BIN system --list </dev/null)
+check "system --list : swap, conteneur et libre en TSV" eval '[[ $(col "$out" "	swap	" 5) == swap && $(col "$out" "	free	" 5) == free && $out == *"	container	"* && ! -e $HIST ]]'
+mkapp ZzListApp com.test.zzlist
+mkdir -p "$HOME/Library/Application Support/ZzListApp"; print x > "$HOME/Library/Application Support/ZzListApp/data"
+out=$($BIN uninstall "$HOME/Applications/ZzListApp.app" --list </dev/null)
+check "uninstall <app> --list : app et fichiers liés, rien déplacé" eval 'tsv_ok "$out" && [[ $(col "$out" ZzListApp.app 5) == app && $(col "$out" "Application Support" 5) == dir && -d $HOME/Applications/ZzListApp.app && ! -e $HIST ]]'
+FAKE=$SANDBOX/bin; mkdir -p $FAKE
+for b in sudo dscacheutil killall mdutil periodic lsregister; do
+  print -r -- '#!/bin/zsh
+exit 0' > $FAKE/$b
+  chmod +x $FAKE/$b
+done
+out=$(PATH=$FAKE:$PATH MAC_CLEANER_MACHINE=1 MAC_CLEANER_LSREGISTER=$FAKE/lsregister $BIN maintenance --yes --select "1 3" </dev/null)
+check "maintenance --yes machine : étapes en cours puis faites" eval '[[ $out == *"STEP	dns	running"*"STEP	dns	done"*"STEP	launch	running"*"STEP	launch	done"* ]]'
+out=$($BIN maintenance --yes --select 3 </dev/null)
+check "sans MAC_CLEANER_MACHINE : pas de ligne STEP" eval '[[ $out != *STEP* ]]'
+teardown
 
 print "\n$pass ok, $fail échec(s)"
 (( fail == 0 ))
